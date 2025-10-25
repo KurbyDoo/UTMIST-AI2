@@ -1,8 +1,15 @@
+from sb3_contrib import RecurrentPPO
+from stable_baselines3 import A2C, PPO
+from pygame.locals import QUIT
+from stable_baselines3.common.results_plotter import load_results, ts2xy
+from stable_baselines3.common.base_class import BaseAlgorithm
+from tqdm import tqdm
+from stable_baselines3.common.vec_env import DummyVecEnv
 from environment.environment import ActHelper, AirTurnaroundState, Animation, AnimationSprite2D, AttackState, BackDashState, Camera, CameraResolution, Capsule, CapsuleCollider, Cast, CastFrameChangeHolder, CasterPositionChange, CasterVelocityDampXY, CasterVelocitySet, CasterVelocitySetXY, CompactMoveState, DashState, DealtPositionTarget, DodgeState, Facing, GameObject, Ground, GroundState, HurtboxPositionChange, InAirState, KOState, KeyIconPanel, KeyStatus, MalachiteEnv, MatchStats, MoveManager, MoveType, ObsHelper, Particle, Player, PlayerInputHandler, PlayerObjectState, PlayerStats, Power, RenderMode, Result, Signal, SprintingState, Stage, StandingState, StunState, Target, TauntState, TurnaroundState, UIHandler, WalkingState, WarehouseBrawl, hex_to_rgb
 
 import warnings
 from typing import TYPE_CHECKING, Any, Generic, \
- SupportsFloat, TypeVar, Type, Optional, List, Dict, Callable
+    SupportsFloat, TypeVar, Type, Optional, List, Dict, Callable
 from enum import Enum, auto
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, MISSING
@@ -13,7 +20,13 @@ from typing import Tuple, Any
 from PIL import Image, ImageSequence
 import matplotlib.pyplot as plt
 
-import gdown, os, math, random, shutil, json
+import gdown
+import os
+import math
+import random
+import shutil
+import json
+import logging
 
 import numpy as np
 import torch
@@ -38,6 +51,29 @@ from IPython.display import Video
 from stable_baselines3.common.monitor import Monitor
 
 
+# Logging information
+def setup_logger(log_dir: str, name: str) -> logging.Logger:
+    """Set up a logger that writes to a file in the log directory."""
+    os.makedirs(log_dir, exist_ok=True)
+
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+
+    # Remove existing handlers
+    logger.handlers.clear()
+
+    # File handler
+    handler = logging.FileHandler(os.path.join(log_dir, f"{name}.log"))
+    handler.setLevel(logging.INFO)
+
+    # Format
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+
+    logger.addHandler(handler)
+
+    return logger
+
 # ## Agents
 
 # ### Agent Abstract Base Class
@@ -47,12 +83,13 @@ from stable_baselines3.common.monitor import Monitor
 
 SelfAgent = TypeVar("SelfAgent", bound="Agent")
 
+
 class Agent(ABC):
 
     def __init__(
-            self,
-            file_path: Optional[str] = None
-        ):
+        self,
+        file_path: Optional[str] = None
+    ):
 
         # If no supplied file_path, load from gdown (optional file_path returned)
         if file_path is None:
@@ -121,6 +158,7 @@ class ConstantAgent(Agent):
     - The ConstantAgent simply is in an IdleState (action_space all equal to zero.)
     As such it will not do anything, DON'T use this agent for your training.
     '''
+
     def __init__(
             self,
             *args,
@@ -132,12 +170,14 @@ class ConstantAgent(Agent):
         action = np.zeros_like(self.action_space.sample())
         return action
 
+
 class RandomAgent(Agent):
     '''
     RandomAgent:
     - The RandomAgent (as it name says) simply samples random actions.
     NOT used for training
     '''
+
     def __init__(
             self,
             *args,
@@ -188,7 +228,6 @@ class RewTerm():
     """
 
 
-
 # In[ ]:
 
 
@@ -197,8 +236,8 @@ class RewardManager():
 
     # (1) Constant running reward
     def __init__(self,
-                 reward_functions: Optional[Dict[str, RewTerm]]=None,
-                 signal_subscriptions: Optional[Dict[str, Tuple[str, RewTerm]]]=None) -> None:
+                 reward_functions: Optional[Dict[str, RewTerm]] = None,
+                 signal_subscriptions: Optional[Dict[str, Tuple[str, RewTerm]]] = None) -> None:
         self.reward_functions = reward_functions
         self.signal_subscriptions = signal_subscriptions
         self.total_reward = 0.0
@@ -212,7 +251,8 @@ class RewardManager():
 
     def _signal_func(self, term_cfg: RewTerm, *args, **kwargs):
         term_partial = partial(term_cfg.func, **term_cfg.params)
-        self.collected_signal_rewards += term_partial(*args, **kwargs) * term_cfg.weight
+        self.collected_signal_rewards += term_partial(
+            *args, **kwargs) * term_cfg.weight
 
     def process(self, env, dt) -> float:
         # reset computation
@@ -253,6 +293,7 @@ class SaveHandlerMode(Enum):
     FORCE = 0
     RESUME = 1
 
+
 class SaveHandler():
     """Handles saving.
 
@@ -267,15 +308,15 @@ class SaveHandler():
     # System for saving to internet
 
     def __init__(
-            self,
-            agent: Agent,
-            save_freq: int=10_000,
-            max_saved: int=20,
-            run_name: str='experiment_1',
-            save_path: str='checkpoints',
-            name_prefix: str = "rl_model",
-            mode: SaveHandlerMode=SaveHandlerMode.FORCE
-        ):
+        self,
+        agent: Agent,
+        save_freq: int = 10_000,
+        max_saved: int = 20,
+        run_name: str = 'experiment_1',
+        save_path: str = 'checkpoints',
+        name_prefix: str = "rl_model",
+        mode: SaveHandlerMode = SaveHandlerMode.FORCE
+    ):
         self.agent = agent
         self.save_freq = save_freq
         self.run_name = run_name
@@ -287,19 +328,22 @@ class SaveHandler():
         self.steps_until_save = save_freq
         # Get model paths from exp_path, if it exists
         exp_path = self._experiment_path()
+
         self.history: List[str] = []
         if self.mode == SaveHandlerMode.FORCE:
             # Clear old dir
             if os.path.exists(exp_path) and len(os.listdir(exp_path)) != 0:
                 while True:
-                    answer = input(f"Would you like to clear the folder {exp_path} (SaveHandlerMode.FORCE): yes (y) or no (n): ").strip().lower()
+                    answer = input(
+                        f"Would you like to clear the folder {exp_path} (SaveHandlerMode.FORCE): yes (y) or no (n): ").strip().lower()
                     if answer in ('y', 'n'):
                         break
                     else:
                         print("Invalid input, please enter 'y' or 'n'.")
 
                 if answer == 'n':
-                    raise ValueError('Please switch to SaveHandlerMode.FORCE or use a new run_name.')
+                    raise ValueError(
+                        'Please switch to SaveHandlerMode.FORCE or use a new run_name.')
                 print(f'Clearing {exp_path}...')
                 if os.path.exists(exp_path):
                     shutil.rmtree(exp_path)
@@ -311,12 +355,15 @@ class SaveHandler():
         elif self.mode == SaveHandlerMode.RESUME:
             if os.path.exists(exp_path):
                 # Get all model paths
-                self.history = [os.path.join(exp_path, f) for f in os.listdir(exp_path) if os.path.isfile(os.path.join(exp_path, f))]
+                self.history = [os.path.join(exp_path, f) for f in os.listdir(
+                    exp_path) if os.path.isfile(os.path.join(exp_path, f))]
                 # Filter any non .csv
                 self.history = [f for f in self.history if f.endswith('.zip')]
                 if len(self.history) != 0:
-                    self.history.sort(key=lambda x: int(os.path.basename(x).split('_')[-2].split('.')[0]))
-                    if max_saved != -1: self.history = self.history[-max_saved:]
+                    self.history.sort(key=lambda x: int(
+                        os.path.basename(x).split('_')[-2].split('.')[0]))
+                    if max_saved != -1:
+                        self.history = self.history[-max_saved:]
                     print(f'Best model is {self.history[-1]}')
                 else:
                     print(f'No models found in {exp_path}.')
@@ -324,6 +371,8 @@ class SaveHandler():
             else:
                 print(f'No file found at {exp_path}')
 
+        self.game_logger = setup_logger(exp_path, 'game_iterations')
+        self.training_logger = setup_logger(exp_path, 'training_metrics')
 
     def update_info(self) -> None:
         self.num_timesteps = self.agent.get_num_timesteps()
@@ -356,10 +405,12 @@ class SaveHandler():
 
     def process(self) -> bool:
         self.num_timesteps += 1
-
+        if not (self.num_timesteps % 1_000):
+            # print(f"{self.num_timesteps // 1_000}K steps processed")
+            self.game_logger.info(f"{self.num_timesteps // 1_000}K steps processed")
         if self.steps_until_save <= 0:
             # Save agent
-            self.steps_until_save = self.save_freq
+            self.steps_until_save = self.save_freq - 1
             self.save_agent()
             return True
         self.steps_until_save -= 1
@@ -376,18 +427,20 @@ class SaveHandler():
             return None
         return self.history[-1]
 
+
 class SelfPlayHandler(ABC):
     """Handles self-play."""
 
     def __init__(self, agent_partial: partial):
         self.agent_partial = agent_partial
-    
+
     def get_model_from_path(self, path) -> Agent:
         if path:
             try:
                 opponent = self.agent_partial(file_path=path)
             except FileNotFoundError:
-                print(f"Warning: Self-play file {path} not found. Defaulting to constant agent.")
+                print(
+                    f"Warning: Self-play file {path} not found. Defaulting to constant agent.")
                 opponent = ConstantAgent()
         else:
             print("Warning: No self-play model saved. Defaulting to constant agent.")
@@ -399,23 +452,26 @@ class SelfPlayHandler(ABC):
     def get_opponent(self) -> Agent:
         pass
 
+
 class SelfPlayLatest(SelfPlayHandler):
     def __init__(self, agent_partial: partial):
         super().__init__(agent_partial)
-    
+
     def get_opponent(self) -> Agent:
         assert self.save_handler is not None, "Save handler must be specified for self-play"
         chosen_path = self.save_handler.get_latest_model_path()
         return self.get_model_from_path(chosen_path)
 
+
 class SelfPlayRandom(SelfPlayHandler):
     def __init__(self, agent_partial: partial):
         super().__init__(agent_partial)
-    
+
     def get_opponent(self) -> Agent:
         assert self.save_handler is not None, "Save handler must be specified for self-play"
         chosen_path = self.save_handler.get_random_model_path()
         return self.get_model_from_path(chosen_path)
+
 
 @dataclass
 class OpponentsCfg():
@@ -427,18 +483,21 @@ class OpponentsCfg():
     """
     swap_steps: int = 10_000
     opponents: dict[str, Any] = field(default_factory=lambda: {
-                'random_agent': (0.8, partial(RandomAgent)),
-                'constant_agent': (0.2, partial(ConstantAgent)),
-                #'recurrent_agent': (0.1, partial(RecurrentPPOAgent, file_path='skibidi')),
-            })
+        'random_agent': (0.8, partial(RandomAgent)),
+        'constant_agent': (0.2, partial(ConstantAgent)),
+        # 'recurrent_agent': (0.1, partial(RecurrentPPOAgent, file_path='skibidi')),
+    })
 
     def validate_probabilities(self) -> None:
-        total_prob = sum(prob if isinstance(prob, float) else prob[0] for prob in self.opponents.values())
+        total_prob = sum(prob if isinstance(prob, float)
+                         else prob[0] for prob in self.opponents.values())
 
         if abs(total_prob - 1.0) > 1e-5:
-            print(f"Warning: Probabilities do not sum to 1 (current sum = {total_prob}). Normalizing...")
+            print(
+                f"Warning: Probabilities do not sum to 1 (current sum = {total_prob}). Normalizing...")
             self.opponents = {
-                key: (value / total_prob if isinstance(value, float) else (value[0] / total_prob, value[1]))
+                key: (value / total_prob if isinstance(value, float)
+                      else (value[0] / total_prob, value[1]))
                 for key, value in self.opponents.items()
             }
 
@@ -449,11 +508,12 @@ class OpponentsCfg():
 
         agent_name = random.choices(
             list(self.opponents.keys()),
-            weights=[prob if isinstance(prob, float) else prob[0] for prob in self.opponents.values()]
+            weights=[prob if isinstance(prob, float) else prob[0]
+                     for prob in self.opponents.values()]
         )[0]
 
         # If self-play is selected, return the trained model
-        print(f'Selected {agent_name}')
+        print(f'[AGENT] Selected {agent_name}')
         if agent_name == "self_play":
             selfplay_handler: SelfPlayHandler = self.opponents[agent_name][1]
             return selfplay_handler.get_opponent()
@@ -476,11 +536,11 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
     metadata = {"render_modes": ["human"], "render_fps": 30}
 
     def __init__(self,
-                 reward_manager: Optional[RewardManager]=None,
-                 opponent_cfg: OpponentsCfg=OpponentsCfg(),
-                 save_handler: Optional[SaveHandler]=None,
+                 reward_manager: Optional[RewardManager] = None,
+                 opponent_cfg: OpponentsCfg = OpponentsCfg(),
+                 save_handler: Optional[SaveHandler] = None,
                  render_every: int | None = None,
-                 resolution: CameraResolution=CameraResolution.LOW):
+                 resolution: CameraResolution = CameraResolution.LOW):
         """
         Initializes the environment.
 
@@ -500,7 +560,6 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
 
         self.games_done = 0
 
-
         # Give OpponentCfg references, and normalize probabilities
         self.opponent_cfg.env = self
         self.opponent_cfg.validate_probabilities()
@@ -513,7 +572,7 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
                 # Give SelfPlayHandler references
                 selfplay_handler: SelfPlayHandler = value[1]
                 selfplay_handler.save_handler = self.save_handler
-                selfplay_handler.env = self       
+                selfplay_handler.env = self
 
         self.raw_env = WarehouseBrawl(resolution=resolution, train_mode=True)
         self.action_space = self.raw_env.action_space
@@ -528,7 +587,8 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
 
     def on_training_end(self):
         if self.save_handler is not None:
-            self.save_handler.agent.update_num_timesteps(self.save_handler.num_timesteps)
+            self.save_handler.agent.update_num_timesteps(
+                self.save_handler.num_timesteps)
             self.save_handler.save_agent()
 
     def step(self, action):
@@ -538,7 +598,8 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
             1: self.opponent_agent.predict(self.opponent_obs),
         }
 
-        observations, rewards, terminated, truncated, info = self.raw_env.step(full_action)
+        observations, rewards, terminated, truncated, info = self.raw_env.step(
+            full_action)
 
         if self.save_handler is not None:
             self.save_handler.process()
@@ -562,16 +623,43 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
             self.opponent_agent: Agent = new_agent
         self.opponent_obs = observations[1]
 
-
         self.games_done += 1
-        #if self.games_done % self.render_every == 0:
-            #self.render_out_video()
+        
+        if self.save_handler is not None:
+            if self.games_done == 1:
+                self.save_handler.game_logger.info(f"------- Starting at {self.save_handler.num_timesteps}")
+                
+            self.save_handler.game_logger.info(f"[AGENT] Complete game {self.games_done}")
+        else:
+            print(f"[AGENT] Complete game {self.games_done}")
+
+        # Render video after x games
+        if self.games_done % self.render_every == 0:
+            self.render_demo_video()
 
         return observations[0], info
 
     def render(self):
         img = self.raw_env.render()
         return img
+    
+    def render_demo_video(self):
+        """Renders a demo video of the current agent vs opponent."""
+        print(f"[RENDER] Creating demo video at {self.games_done} games...")
+
+        video_path = f"{self.save_handler._experiment_path()}/demo_game_{self.games_done}.mp4" if self.save_handler else f"demo_game_{self.games_done}.mp4"
+
+        # Run a match and record it
+        run_match(
+            agent_1=self.save_handler.agent,
+            agent_2=self.opponent_agent,
+            max_timesteps=30 * 90,  # 90 second match
+            video_path=video_path,
+            resolution=self.resolution
+        )
+
+        print(f"[RENDER] Demo saved to {video_path}")
+
 
     def close(self):
         pass
@@ -582,17 +670,14 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
 # In[ ]:
 
 
-from stable_baselines3.common.vec_env import DummyVecEnv
-from tqdm import tqdm
-
 def run_match(agent_1: Agent | partial,
               agent_2: Agent | partial,
               max_timesteps=30*90,
-              video_path: Optional[str]=None,
-              agent_1_name: Optional[str]=None,
-              agent_2_name: Optional[str]=None,
-              resolution = CameraResolution.LOW,
-              reward_manager: Optional[RewardManager]=None,
+              video_path: Optional[str] = None,
+              agent_1_name: Optional[str] = None,
+              agent_2_name: Optional[str] = None,
+              resolution=CameraResolution.LOW,
+              reward_manager: Optional[RewardManager] = None,
               train_mode=False
               ) -> MatchStats:
     # Initialize env
@@ -613,7 +698,6 @@ def run_match(agent_1: Agent | partial,
 
     env.agent_1_name = agent_1_name
     env.agent_2_name = agent_2_name
-
 
     writer = None
     if video_path is None:
@@ -636,33 +720,35 @@ def run_match(agent_1: Agent | partial,
         agent_2 = agent_2()
 
     # Initialize agents
-    if not agent_1.initialized: agent_1.get_env_info(env)
-    if not agent_2.initialized: agent_2.get_env_info(env)
+    if not agent_1.initialized:
+        agent_1.get_env_info(env)
+    if not agent_2.initialized:
+        agent_2.get_env_info(env)
     # 596, 336
     platform1 = env.objects["platform1"]
 
     for time in tqdm(range(max_timesteps), total=max_timesteps):
-      platform1.physics_process(0.05)
-      full_action = {
-          0: agent_1.predict(obs_1),
-          1: agent_2.predict(obs_2)
-      }
+        platform1.physics_process(0.05)
+        full_action = {
+            0: agent_1.predict(obs_1),
+            1: agent_2.predict(obs_2)
+        }
 
-      observations, rewards, terminated, truncated, info = env.step(full_action)
-      obs_1 = observations[0]
-      obs_2 = observations[1]
+        observations, rewards, terminated, truncated, info = env.step(
+            full_action)
+        obs_1 = observations[0]
+        obs_2 = observations[1]
 
-      if reward_manager is not None:
-          reward_manager.process(env, 1 / env.fps)
+        if reward_manager is not None:
+            reward_manager.process(env, 1 / env.fps)
 
-      if video_path is not None:
-          img = env.render()
-          writer.writeFrame(img)
-          del img
+        if video_path is not None:
+            img = env.render()
+            writer.writeFrame(img)
+            del img
 
-      if terminated or truncated:
-          break
-
+        if terminated or truncated:
+            break
 
     if video_path is not None:
         writer.close()
@@ -679,7 +765,7 @@ def run_match(agent_1: Agent | partial,
         result = Result.LOSS
     else:
         result = Result.DRAW
-    
+
     match_stats = MatchStats(
         match_time=env.steps / env.fps,
         player1=player_1_stats,
@@ -704,6 +790,7 @@ class ConstantAgent(Agent):
     def predict(self, obs):
         action = np.zeros_like(self.action_space.sample())
         return action
+
 
 class RandomAgent(Agent):
 
@@ -758,6 +845,7 @@ class BasedAgent(Agent):
             action = self.act_helper.press_keys(['j'], action)
         return action
 
+
 class UserInputAgent(Agent):
 
     def __init__(
@@ -769,7 +857,7 @@ class UserInputAgent(Agent):
 
     def predict(self, obs):
         action = self.act_helper.zeros()
-       
+
         keys = pygame.key.get_pressed()
         if keys[pygame.K_w]:
             action = self.act_helper.press_keys(['w'], action)
@@ -793,9 +881,9 @@ class UserInputAgent(Agent):
         if keys[pygame.K_g]:
             action = self.act_helper.press_keys(['g'], action)
 
-        #if keys[pygame.K_q]:
+        # if keys[pygame.K_q]:
         #    action = self.act_helper.press_keys(['q'], action)
-        #if keys[pygame.K_v]:
+        # if keys[pygame.K_v]:
         #    action = self.act_helper.press_keys(['v'], action)
         return action
 
@@ -824,13 +912,13 @@ class ClockworkAgent(Agent):
                 (30, []),
                 (7, ['d']),
                 (1, ['a']),
-                (4, ['a','l']),
+                (4, ['a', 'l']),
                 (1, ['a']),
-                (4, ['a','l']),
+                (4, ['a', 'l']),
                 (1, ['a']),
-                (4, ['a','l']),
+                (4, ['a', 'l']),
                 (1, ['a']),
-                (4, ['a','l']),
+                (4, ['a', 'l']),
                 (20, []),
                 (15, ['space']),
                 (5, []),
@@ -846,7 +934,6 @@ class ClockworkAgent(Agent):
         else:
             self.action_sheet = action_sheet
 
-
     def predict(self, obs):
         """
         Returns an action vector based on the predefined action sheet.
@@ -861,12 +948,9 @@ class ClockworkAgent(Agent):
         # Apply the currently active action
         action = self.act_helper.press_keys(self.current_action_data)
 
-
         self.steps += 1  # Increment step counter
         return action
 
-from stable_baselines3 import A2C, PPO
-from stable_baselines3.common.base_class import BaseAlgorithm
 
 class SB3Agent(Agent):
 
@@ -880,7 +964,8 @@ class SB3Agent(Agent):
 
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = self.sb3_class("MlpPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
+            self.model = self.sb3_class(
+                "MlpPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
             del self.env
         else:
             self.model = self.sb3_class.load(self.file_path)
@@ -889,8 +974,8 @@ class SB3Agent(Agent):
         # Call gdown to your link
         return
 
-    #def set_ignore_grad(self) -> None:
-        #self.model.set_ignore_act_grad(True)
+    # def set_ignore_grad(self) -> None:
+        # self.model.set_ignore_act_grad(True)
 
     def predict(self, obs):
         action, _ = self.model.predict(obs)
@@ -902,12 +987,42 @@ class SB3Agent(Agent):
     def learn(self, env, total_timesteps, log_interval: int = 1, verbose=0):
         self.model.set_env(env)
         self.model.verbose = verbose
+
+        # Store reference to save_handler's logger if available
+        base_env = env.unwrapped if hasattr(env, 'unwrapped') else env
+        training_logger = base_env.save_handler.training_logger if base_env.save_handler else None
+
+        # Custom callback to capture training metrics
+        from stable_baselines3.common.callbacks import BaseCallback
+
+        class LoggingCallback(BaseCallback):
+            def __init__(self, logger):
+                super().__init__()
+                self.training_logger = logger
+
+            def _on_step(self) -> bool:
+                return True
+
+            def _on_rollout_end(self) -> None:
+                if self.training_logger and self.num_timesteps % (log_interval * self.model.n_steps) == 0:
+                    # Log the metrics that would appear in the table
+                    metrics = {
+                        'timesteps': self.num_timesteps,
+                        'ep_len_mean': self.model.ep_info_buffer[-1]['l'] if len(self.model.ep_info_buffer) > 0 else 0,
+                        'ep_rew_mean': self.model.ep_info_buffer[-1]['r'] if len(self.model.ep_info_buffer) > 0 else 0,
+                    }
+                    self.training_logger.info(f"Metrics: {metrics}")
+
+        callback = LoggingCallback(
+            training_logger) if training_logger else None
+
+
         self.model.learn(
             total_timesteps=total_timesteps,
             log_interval=log_interval,
+            callback=callback
         )
 
-from sb3_contrib import RecurrentPPO
 
 class RecurrentPPOAgent(Agent):
 
@@ -930,11 +1045,13 @@ class RecurrentPPOAgent(Agent):
                 'share_features_extractor': True,
 
             }
+
+            # TODO: Find a good tuning for this
             self.model = RecurrentPPO("MlpLstmPolicy",
                                       self.env,
                                       verbose=0,
-                                      n_steps=30*90*20,
-                                      batch_size=16,
+                                      n_steps=30*90*3,
+                                      batch_size=128,
                                       ent_coef=0.05,
                                       policy_kwargs=policy_kwargs)
             del self.env
@@ -945,8 +1062,10 @@ class RecurrentPPOAgent(Agent):
         self.episode_starts = True
 
     def predict(self, obs):
-        action, self.lstm_states = self.model.predict(obs, state=self.lstm_states, episode_start=self.episode_starts, deterministic=True)
-        if self.episode_starts: self.episode_starts = False
+        action, self.lstm_states = self.model.predict(
+            obs, state=self.lstm_states, episode_start=self.episode_starts, deterministic=True)
+        if self.episode_starts:
+            self.episode_starts = False
         return action
 
     def save(self, file_path: str) -> None:
@@ -955,7 +1074,36 @@ class RecurrentPPOAgent(Agent):
     def learn(self, env, total_timesteps, log_interval: int = 2, verbose=0):
         self.model.set_env(env)
         self.model.verbose = verbose
-        self.model.learn(total_timesteps=total_timesteps, log_interval=log_interval)
+
+        # Store reference to save_handler's logger if available
+        base_env = env.unwrapped if hasattr(env, 'unwrapped') else env
+        training_logger = base_env.save_handler.training_logger if base_env.save_handler else None
+        
+        # Custom callback to capture training metrics
+        from stable_baselines3.common.callbacks import BaseCallback
+        
+        class LoggingCallback(BaseCallback):
+            def __init__(self, logger):
+                super().__init__()
+                self.training_logger = logger
+            
+            def _on_step(self) -> bool:
+                return True
+            
+            def _on_rollout_end(self) -> None:
+                if self.training_logger and self.num_timesteps % (log_interval * self.model.n_steps) == 0:
+                    metrics = {
+                        'timesteps': self.num_timesteps,
+                        'iterations': self.num_timesteps // self.model.n_steps,
+                    }
+                    self.training_logger.info(f"Metrics: {metrics}")
+        
+        callback = LoggingCallback(training_logger) if training_logger else None
+        
+
+        self.model.learn(total_timesteps=total_timesteps,
+                         log_interval=log_interval,
+                         callback=callback)
 
 
 # ## Training Function
@@ -964,13 +1112,11 @@ class RecurrentPPOAgent(Agent):
 # In[ ]:
 
 
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.results_plotter import load_results, ts2xy
-
 class TrainLogging(Enum):
     NONE = 0
     TO_FILE = 1
     PLOT = 2
+
 
 def plot_results(log_folder, title="Learning Curve"):
     """
@@ -985,7 +1131,7 @@ def plot_results(log_folder, title="Learning Curve"):
     print(weights, y)
     y = np.convolve(y, weights, "valid")
     # Truncate x
-    x = x[len(x) - len(y) :]
+    x = x[len(x) - len(y):]
 
     fig = plt.figure(title)
     plt.plot(x, y)
@@ -996,19 +1142,22 @@ def plot_results(log_folder, title="Learning Curve"):
     # save to file
     plt.savefig(log_folder + title + ".png")
 
+
 def train(agent: Agent,
           reward_manager: RewardManager,
-          save_handler: Optional[SaveHandler]=None,
-          opponent_cfg: OpponentsCfg=OpponentsCfg(),
-          resolution: CameraResolution=CameraResolution.LOW,
-          train_timesteps: int=400_000,
-          train_logging: TrainLogging=TrainLogging.PLOT
+          save_handler: Optional[SaveHandler] = None,
+          opponent_cfg: OpponentsCfg = OpponentsCfg(),
+          resolution: CameraResolution = CameraResolution.LOW,
+          train_timesteps: int = 400_000,
+          train_logging: TrainLogging = TrainLogging.PLOT,
+          render_every: int | None = None
           ):
     # Create environment
     env = SelfPlayWarehouseBrawl(reward_manager=reward_manager,
                                  opponent_cfg=opponent_cfg,
                                  save_handler=save_handler,
-                                 resolution=resolution
+                                 resolution=resolution,
+                                 render_every=render_every
                                  )
     reward_manager.subscribe_signals(env.raw_env)
     if train_logging != TrainLogging.NONE:
@@ -1036,9 +1185,9 @@ def train(agent: Agent,
     if train_logging == TrainLogging.PLOT:
         plot_results(log_dir)
 
-## Run Human vs AI match function
-import pygame
-from pygame.locals import QUIT
+
+# Run Human vs AI match function
+
 
 def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=30*90, resolution=CameraResolution.LOW):
     pygame.init()
@@ -1059,9 +1208,9 @@ def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=3
         CameraResolution.MEDIUM: (720, 1280),
         CameraResolution.HIGH: (1080, 1920)
     }
-    
-    screen = pygame.display.set_mode(resolutions[resolution][::-1])  # Set screen dimensions
 
+    screen = pygame.display.set_mode(
+        resolutions[resolution][::-1])  # Set screen dimensions
 
     pygame.display.set_caption("AI Squared - Player vs AI Demo")
 
@@ -1073,25 +1222,28 @@ def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=3
     obs_1 = observations[0]
     obs_2 = observations[1]
 
-    if not agent_1.initialized: agent_1.get_env_info(env)
-    if not agent_2.initialized: agent_2.get_env_info(env)
+    if not agent_1.initialized:
+        agent_1.get_env_info(env)
+    if not agent_2.initialized:
+        agent_2.get_env_info(env)
 
     # Run the match loop
     running = True
     timestep = 0
    # platform1 = env.objects["platform1"] #mohamed
-    #stage2 = env.objects["stage2"]
-    background_image = pygame.image.load('environment/assets/map/bg.jpg').convert() 
+    # stage2 = env.objects["stage2"]
+    background_image = pygame.image.load(
+        'environment/assets/map/bg.jpg').convert()
     while running and timestep < max_timesteps:
-       
-        # Pygame event to handle real-time user input 
-       
+
+        # Pygame event to handle real-time user input
+
         for event in pygame.event.get():
             if event.type == QUIT:
                 running = False
             if event.type == pygame.VIDEORESIZE:
-                 screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
-       
+                screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
+
         action_1 = agent_1.predict(obs_1)
 
         # AI input
@@ -1099,15 +1251,16 @@ def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=3
 
         # Sample action space
         full_action = {0: action_1, 1: action_2}
-        observations, rewards, terminated, truncated, info = env.step(full_action)
+        observations, rewards, terminated, truncated, info = env.step(
+            full_action)
         obs_1 = observations[0]
         obs_2 = observations[1]
 
         # Render the game
-        
+
         img = env.render()
         screen.blit(pygame.surfarray.make_surface(img), (0, 0))
-     
+
         pygame.display.flip()
 
         # Control frame rate (30 fps)
@@ -1132,7 +1285,7 @@ def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=3
         result = Result.LOSS
     else:
         result = Result.DRAW
-    
+
     match_stats = MatchStats(
         match_time=timestep / 30.0,
         player1=player_1_stats,

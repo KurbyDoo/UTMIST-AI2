@@ -671,12 +671,12 @@ class Camera():
             self.key_panel_1.draw(self, env.cur_action[0])
             self.key_panel_2.draw(self, env.cur_action[1])
 
-        # img = np.transpose(
-        #         np.array(pygame.surfarray.pixels3d(self.canvas)), axes=(1, 0, 2)
-        #     )
+        img = np.transpose(
+                np.array(pygame.surfarray.pixels3d(self.canvas)), axes=(1, 0, 2)
+            )
 
-        img = np.array(pygame.surfarray.pixels3d(self.canvas)).swapaxes(0, 1)[:, ::-1, :]
-        img = np.rot90(img, k=1)  
+        # img = np.array(pygame.surfarray.pixels3d(self.canvas)).swapaxes(0, 1)[:, ::-1, :]
+        # img = np.rot90(img, k=1)  
 
         if mode == RenderMode.PYGAME_WINDOW:
             pygame.display.flip()
@@ -845,6 +845,8 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
         self.stage_height_tiles: float = 16.8
         self.number_of_platforms: int = 2
 
+        self.setup_iteration = 0
+
         self.mode = mode
         self.resolution = resolution
         self.train_mode = train_mode
@@ -889,7 +891,6 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
 
         
         self.load_attacks()
-
         self.reset()
 
     def get_observation_space(self):
@@ -1277,6 +1278,8 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
 
     def _setup(self):
         # Collision fix - prevent players from colliding with each other
+        self.setup_iteration += 1
+        print(f"[ENV] Setup #{self.setup_iteration}")
        
         handler = self.space.add_collision_handler(PLAYER, PLAYER + 1)
         handler.begin = lambda *args, **kwargs: False
@@ -3579,9 +3582,12 @@ class Player(GameObject):
 
         data_path = "assets.zip"
         if not os.path.isfile(data_path):
-            print("Downloading assets.zip...")
+            print("[ENV] Downloading assets.zip...")
             url = "https://drive.google.com/file/d/1F2MJQ5enUPVtyi3s410PUuv8LiWr8qCz/view?usp=sharing"
             gdown.download(url, output=data_path, fuzzy=True)
+
+        # check if directory
+        # print("[ENV] Assets Downloaded!")
 
         self.assets_loaded = True
 
@@ -4240,7 +4246,7 @@ class WeaponSpawner:
 
         
         if not pressed or not collided: return False
-        print(f'collided {w.name}, {pressed}, {collided}')
+        print(f'[ENV] collided {w.name}, {pressed}, {collided}')
         player.weapon = w.name #kaden
         player.env.weapon_equip_signal.emit(agent='player' if player.agent_id == 0 else 'opponent')#kaden
 
@@ -4521,7 +4527,7 @@ class DroppedWeaponSpawner(WeaponSpawner):
 
         if not pressed or not collided: return False
       
-        print(f'pickup {w.name}, {pressed}, {collided}')
+        print(f'[ENV] pickup {w.name}, {pressed}, {collided}')
         player.weapon = w.name #kaden
         player.env.weapon_equip_signal.emit(agent='player' if player.agent_id == 0 else 'opponent')#kaden
             # --- NEW: VFX pickup one-shot -> hidden
