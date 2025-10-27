@@ -25,7 +25,9 @@ from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
-from environment.agent import *
+# TODO: Fix name conflicts
+# from environment.agent import *
+from environment.agent import Agent
 from typing import Optional, Type, List, Tuple
 
 # -------------------------------------------------------------------------
@@ -77,120 +79,6 @@ class SB3Agent(Agent):
             log_interval=log_interval,
         )
 
-class RecurrentPPOAgent(Agent):
-    '''
-    RecurrentPPOAgent:
-    - Defines an RL Agent that uses the Recurrent PPO (LSTM+PPO) algorithm
-    '''
-    def __init__(
-            self,
-            file_path: Optional[str] = None
-    ):
-        super().__init__(file_path)
-        self.lstm_states = None
-        self.episode_starts = np.ones((1,), dtype=bool)
-
-    def _initialize(self) -> None:
-        if self.file_path is None:
-            policy_kwargs = {
-                'activation_fn': nn.ReLU,
-                'lstm_hidden_size': 512,
-                'net_arch': [dict(pi=[32, 32], vf=[32, 32])],
-                'shared_lstm': True,
-                'enable_critic_lstm': False,
-                'share_features_extractor': True,
-
-            }
-
-            # TODO: Find a good tuning for this
-            self.model = RecurrentPPO("MlpLstmPolicy",
-                                      self.env,
-                                      verbose=0,
-                                      n_steps=30*90*3,
-                                      batch_size=128,
-                                      ent_coef=0.05,
-                                      policy_kwargs=policy_kwargs)
-            del self.env
-        else:
-            self.model = RecurrentPPO.load(self.file_path)
-
-    def reset(self) -> None:
-        self.episode_starts = True
-
-    def predict(self, obs):
-        action, self.lstm_states = self.model.predict(obs, state=self.lstm_states, episode_start=self.episode_starts, deterministic=True)
-        if self.episode_starts: self.episode_starts = False
-        return action
-
-    def save(self, file_path: str) -> None:
-        self.model.save(file_path)
-
-
-    def learn(self, env, total_timesteps, log_interval: int = 2, verbose=0):
-        self.model.set_env(env)
-        self.model.verbose = verbose
-
-        # Store reference to save_handler's logger if available
-        base_env = env.unwrapped if hasattr(env, 'unwrapped') else env
-        training_logger = base_env.save_handler.training_logger if base_env.save_handler else None
-        
-        # Custom callback to capture training metrics
-        from stable_baselines3.common.callbacks import BaseCallback
-        
-        class LoggingCallback(BaseCallback):
-            def __init__(self, logger, file_logger):
-                super().__init__()
-                self.training_logger = file_logger
-            
-            def _on_step(self) -> bool:
-                return True
-            
-            def _on_rollout_end(self) -> None:
-                if not (self.training_logger and 
-                        self.num_timesteps % (log_interval * self.model.n_steps) == 0):
-                    return
-
-                metrics = {}
-                # Get from logger name_to_value dict
-                if hasattr(self.logger, 'name_to_value'):
-                    metrics.update(self.logger.name_to_value)
-                
-                # Format and log
-                log_str = f"\n{'='*45}\n"
-                log_str += f"Timestep: {self.num_timesteps}\n"
-                log_str += f"{'='*45}\n"
-                
-                # Group by category
-                categories = {}
-                for key, value in sorted(metrics.items()):
-                    if '/' in key:
-                        category, metric = key.split('/', 1)
-                        if category not in categories:
-                            categories[category] = {}
-                        categories[category][metric] = value
-                    else:
-                        if 'misc' not in categories:
-                            categories['misc'] = {}
-                        categories['misc'][key] = value
-                
-                # Format by category
-                for category, cat_metrics in sorted(categories.items()):
-                    log_str += f"\n{category}/\n"
-                    for metric, value in sorted(cat_metrics.items()):
-                        if isinstance(value, float):
-                            log_str += f"  {metric:25s} {value:.4g}\n"
-                        else:
-                            log_str += f"  {metric:25s} {value}\n"
-                
-                log_str += f"{'='*45}\n"
-                
-                self.training_logger.info(log_str)
-        
-        callback = LoggingCallback(None, training_logger) if training_logger else None
-
-        self.model.learn(total_timesteps=total_timesteps,
-                        log_interval=log_interval,
-                        callback=callback)
 
 class BasedAgent(Agent):
     '''
@@ -402,57 +290,79 @@ class CustomAgent(Agent):
         )
 
 # -------------------------------------------------------------------------
+# -------------------------- Curriculum Training --------------------------
+# -------------------------------------------------------------------------
+
+def train_stage(my_agent, save_name, stage_number):
+    match stage_number:
+        case 0:
+            reward_manager = StopFallingCurriculum()
+            save_freq = 40_500
+            total_iterations = 405_000
+        case 1:
+            reward_manager = TowardsOpponentCurriculum()
+            save_freq = 81_000
+            total_iterations = 810_000
+    
+    save_path = 'checkpoints'
+    run_name = f'{save_name}_stage_{stage_number}'
+
+    # Set save settings here:
+    save_handler = SaveHandler(
+        agent=my_agent,  # Agent to save
+        save_freq=save_freq,  # Save frequency
+        max_saved=20,  # Maximum number of saved models
+        save_path=save_path,  # Save path
+        run_name=run_name,
+        mode=SaveHandlerMode.FORCE  # Save mode, FORCE or RESUME
+    )
+
+    # Set opponent settings here:
+    opponent_specification = {
+        'constant_agent': (1, partial(ConstantAgent)),
+    }
+    opponent_cfg = OpponentsCfg(opponents=opponent_specification)
+
+    train(
+        my_agent,
+        reward_manager,
+        save_handler,
+        opponent_cfg,
+        CameraResolution.LOW,
+        train_timesteps=total_iterations,
+        train_logging=TrainLogging.PLOT,
+        render_every=50
+    )
+
+    return f'{save_path}/{run_name}/rl_model_{total_iterations}_steps'
+
+def train_basic_curriculum(start_stage: int = 0, file_path: str | None = None):
+    if file_path is not None:
+        my_agent = RecurrentPPOAgent(
+            file_path=file_path
+        )
+    else:
+        my_agent = RecurrentPPOAgent()
+
+    save_name = "curriculum_two_stage_v3"
+
+    # Stage 1
+    for stage_number in range(start_stage, 2):
+        last_save = train_stage(my_agent, save_name, stage_number)
+        my_agent = RecurrentPPOAgent(file_path=last_save)
+    
+
+# -------------------------------------------------------------------------
 # ----------------------------- MAIN FUNCTION -----------------------------
 # -------------------------------------------------------------------------
 '''
 The main function runs training. You can change configurations such as the Agent type or opponent specifications here.
 '''
 
-from reward_agents import *
+from user.reward_agents import *
 
 if __name__ == '__main__':
     # Create agent
-    my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
+    # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
-    # Start here if you want to train from scratch. e.g:
-    # my_agent = RecurrentPPOAgent()
-
-    # Start here if you want to train from a specific timestep. e.g:
-    my_agent = RecurrentPPOAgent(
-        file_path='checkpoints/death_penalty_air_penalty_v2/rl_model_108001_steps.zip')
-
-    # Reward manager
-    reward_manager = StandStillReward()
-    # Self-play settings
-    selfplay_handler = SelfPlayRandom(
-        partial(type(my_agent)), # Agent class and its keyword arguments
-                                 # type(my_agent) = Agent class
-    )
-
-    # Set save settings here:
-    save_handler = SaveHandler(
-        agent=my_agent, # Agent to save
-        save_freq=40_500, # Save frequency
-        max_saved=40, # Maximum number of saved models
-        save_path='checkpoints', # Save path
-        run_name='death_penalty_air_penalty_v2',
-        mode=SaveHandlerMode.RESUME # Save mode, FORCE or RESUME
-    )
-
-    # Set opponent settings here:
-    opponent_specification = {
-                    # 'self_play': (8, selfplay_handler),
-                    'constant_agent': (0.5, partial(ConstantAgent)),
-                    # 'based_agent': (1, partial(BasedAgent)),
-                }
-    opponent_cfg = OpponentsCfg(opponents=opponent_specification)
-
-    train(my_agent,
-        reward_manager,
-        save_handler,
-        opponent_cfg,
-        CameraResolution.LOW,
-          train_timesteps=405_000,
-        train_logging=TrainLogging.PLOT,
-        render_every=100
-    )
+    train_basic_curriculum(start_stage=1, file_path='checkpoints/curriculum_two_stage_v3_stage_0/rl_model_405000_steps.zip')

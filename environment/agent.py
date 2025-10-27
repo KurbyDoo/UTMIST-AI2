@@ -17,6 +17,7 @@ from collections import defaultdict
 from functools import partial
 from typing import Tuple, Any
 
+
 from PIL import Image, ImageSequence
 import matplotlib.pyplot as plt
 
@@ -27,6 +28,7 @@ import random
 import shutil
 import json
 import logging
+import time
 
 import numpy as np
 import torch
@@ -325,6 +327,8 @@ class SaveHandler():
         self.name_prefix = name_prefix
         self.mode = mode
 
+        self._start_time = time.time()
+
         self.steps_until_save = save_freq
         # Get model paths from exp_path, if it exists
         exp_path = self._experiment_path()
@@ -396,10 +400,12 @@ class SaveHandler():
         return os.path.join(self._experiment_path(), f"{self.name_prefix}_{self.num_timesteps}_steps.{extension}")
 
     def save_agent(self) -> None:
-        print(f"Saving agent to {self._checkpoint_path()}")
+        # print(f"Saving agent to {self._checkpoint_path()}")
         model_path = self._checkpoint_path('zip')
         self.agent.save(model_path)
         self.history.append(model_path)
+        self.training_logger.info(f"Saving Agent to {self._checkpoint_path()}")
+        self.training_logger.info(f"Iterations: {self.num_timesteps} steps ({(time.time()-self._start_time):.3f}s)")
         if self.max_saved != -1 and len(self.history) > self.max_saved:
             os.remove(self.history.pop(0))
 
@@ -613,6 +619,10 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
 
     def reset(self, seed=None, options=None):
         # Reset MalachiteEnv
+
+        total_reward = self.raw_env.logger[0].get("total_reward", -float('inf'))
+        self.save_handler.training_logger.info(f"Completed game with reward {total_reward}")
+
         observations, info = self.raw_env.reset()
 
         self.reward_manager.reset()
@@ -627,14 +637,14 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
         
         if self.save_handler is not None:
             if self.games_done == 1:
-                self.save_handler.game_logger.info(f"------- Starting at {self.save_handler.num_timesteps}")
+                self.save_handler.game_logger.info(f"------- Starting at {self.save_handler.num_timesteps} -------")
                 
             self.save_handler.game_logger.info(f"[AGENT] Complete game {self.games_done}")
         else:
             print(f"[AGENT] Complete game {self.games_done}")
 
-        # Render video after x games
-        if self.games_done % self.render_every == 0:
+        # Render video after x games and before training
+        if self.games_done % self.render_every == 0 or self.games_done == 1:
             self.render_demo_video()
 
         return observations[0], info
@@ -647,7 +657,7 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
         """Renders a demo video of the current agent vs opponent."""
         print(f"[RENDER] Creating demo video at {self.games_done} games...")
 
-        video_path = f"{self.save_handler._experiment_path()}/demo_game_{self.games_done}.mp4" if self.save_handler else f"demo_game_{self.games_done}.mp4"
+        video_path = f"{self.save_handler._experiment_path()}/demo_game_t{self.save_handler.num_timesteps}.mp4" if self.save_handler else f"demo_game_{self.games_done}.mp4"
 
         # Run a match and record it
         run_match(
@@ -655,7 +665,8 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
             agent_2=self.opponent_agent,
             max_timesteps=30 * 90,  # 90 second match
             video_path=video_path,
-            resolution=self.resolution
+            resolution=self.resolution,
+            reward_manager=self.reward_manager
         )
 
         print(f"[RENDER] Demo saved to {video_path}")
@@ -710,7 +721,8 @@ def run_match(agent_1: Agent | partial,
             '-pix_fmt': 'yuv420p',  # Compatible with both WMP & Colab
             '-preset': 'fast',  # Faster encoding
             '-crf': '20',  # Quality-based encoding (lower = better quality)
-            '-r': '30'  # Frame rate
+            '-r': '30',  # Frame rate
+            '-vf': 'transpose=1,hflip'
         })
 
     # If partial
@@ -1039,11 +1051,10 @@ class RecurrentPPOAgent(Agent):
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
                 'lstm_hidden_size': 512,
-                'net_arch': [dict(pi=[32, 32], vf=[32, 32])],
+                'net_arch': [dict(pi=[64, 64], vf=[64, 64])],
                 'shared_lstm': True,
                 'enable_critic_lstm': False,
                 'share_features_extractor': True,
-
             }
 
             # TODO: Find a good tuning for this
@@ -1051,8 +1062,9 @@ class RecurrentPPOAgent(Agent):
                                       self.env,
                                       verbose=0,
                                       n_steps=30*90*3,
-                                      batch_size=128,
+                                      batch_size=256,
                                       ent_coef=0.05,
+                                      learning_rate=5e-4,
                                       policy_kwargs=policy_kwargs)
             del self.env
         else:
@@ -1091,15 +1103,47 @@ class RecurrentPPOAgent(Agent):
                 return True
             
             def _on_rollout_end(self) -> None:
-                if self.training_logger and self.num_timesteps % (log_interval * self.model.n_steps) == 0:
-                    metrics = {
-                        'timesteps': self.num_timesteps,
-                        'iterations': self.num_timesteps // self.model.n_steps,
-                    }
-                    self.training_logger.info(f"Metrics: {metrics}")
-        
-        callback = LoggingCallback(training_logger) if training_logger else None
-        
+                if not (self.training_logger and
+                        self.num_timesteps % (log_interval * self.model.n_steps) == 0):
+                    return
+
+                metrics = {}
+                # Get from logger name_to_value dict
+                if hasattr(self.logger, 'name_to_value'):
+                    metrics.update(self.logger.name_to_value)
+
+                # Format and log
+                log_str = f"\n{'='*45}\n"
+                log_str += f"Timestep: {self.num_timesteps}\n"
+                log_str += f"{'='*45}\n"
+
+                # Group by category
+                categories = {}
+                for key, value in sorted(metrics.items()):
+                    if '/' in key:
+                        category, metric = key.split('/', 1)
+                        if category not in categories:
+                            categories[category] = {}
+                        categories[category][metric] = value
+                    else:
+                        if 'misc' not in categories:
+                            categories['misc'] = {}
+                        categories['misc'][key] = value
+
+                # Format by category
+                for category, cat_metrics in sorted(categories.items()):
+                    log_str += f"\n{category}/\n"
+                    for metric, value in sorted(cat_metrics.items()):
+                        if isinstance(value, float):
+                            log_str += f"  {metric:25s} {value:.4g}\n"
+                        else:
+                            log_str += f"  {metric:25s} {value}\n"
+
+                log_str += f"{'='*45}\n"
+
+                self.training_logger.info(log_str)
+
+        callback = LoggingCallback(training_logger) if training_logger else None        
 
         self.model.learn(total_timesteps=total_timesteps,
                          log_interval=log_interval,

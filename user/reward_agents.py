@@ -1,27 +1,76 @@
 from environment.agent import *
-from reward_functions import *
+from user.reward_functions import *
+
+
+class BaseReward(RewardManager):
+    def __init__(self):
+        self.reward_functions = self._get_reward_functions()
+        self.signal_subscriptions = self._get_signal_subscriptions()
+
+        super().__init__(self.reward_functions, self.signal_subscriptions)
+
+    def _get_reward_functions(self):
+        """Override this method in subclasses to customize rewards"""
+        return {
+            'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.1),
+            'key_spam': RewTerm(func=holding_more_than_3_keys, weight=0.5),
+            'avoid_taunt': RewTerm(func=avoid_taunt, weight=0.1)
+        }
+
+    def _get_signal_subscriptions(self):
+        """Override this method in subclasses to customize signals"""
+        return {
+            'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=20)),
+            'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=10)),
+        }
+
+
+class StopFallingCurriculum(BaseReward):
+    def _get_reward_functions(self):
+        return super()._get_reward_functions() | {
+            'far_attack': RewTerm(func=penalize_far_attack, weight=0.2),
+            'avoid_edge': RewTerm(func=edge_avoidance_reward, weight=0.1),
+            'avoid_pit': RewTerm(func=pit_avoidance_reward, weight=0.1),
+        }
+
+
+class TowardsOpponentCurriculum(StopFallingCurriculum):
+    def _get_reward_functions(self):
+        return super()._get_reward_functions() | {
+            'head_to_opponent': RewTerm(func=norm_op_dist, weight=0.5),
+            'stationary_penalty': RewTerm(func=stand_still_penalty, weight=0.2),
+            'avoid_taunt': RewTerm(func=avoid_taunt, weight=1)
+        }
 
 # StandStill Agent
 # - Successfully stops falling off the map
 # - Chooses to stop moving entirely
-class StandStillReward(RewardManager):
-    def __init__():
-        reward_functions = {
-            # 'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
+class StandStillReward(BaseReward):
+    def _get_reward_functions(self):
+        return super()._get_reward_functions() | {
+            'in_air_reward':  RewTerm(func=in_air_reward, weight=0.01),
+            'head_to_opponent':  RewTerm(func=head_to_opponent, weight=0.05)
+        }
+
+
+class TowardsOpponent(StandStillReward):
+    def _get_reward_functions(self):
+        return super()._get_reward_functions() | {
             'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.5),
-            # 'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
-            # 'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
-            'in_air_reward': RewTerm(func=in_air_reward, weight=0.01),
+            'in_air_reward': RewTerm(func=in_air_reward, weight=0.001),
             'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.05),
-            # 'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
-            # 'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.01),
-            # 'taunt_reward': RewTerm(func=in_state_reward, weight=0.2, params={'desired_state': TauntState}),
         }
-        signal_subscriptions = {
-            'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=50)),
-            'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=20)),
-            'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=5)),
-            # 'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=10)),
-            # 'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=10))
+
+
+class AvoidFalling(TowardsOpponent):
+    def _get_reward_functions(self):
+        return super()._get_reward_functions() | {
+            'avoid_falling': RewTerm(func=avoid_falling_reward, weight=0.05),
+            'head_to_opponent': RewTerm(func=norm_op_dist, weight=0.001),
         }
-        super(reward_functions, signal_subscriptions)
+    
+class BasicHit(AvoidFalling):
+    def _get_reward_functions(self):
+        return super()._get_reward_functions() | {
+            'hit_opponent': RewTerm(func=damage_interaction_reward, weight=0.1),
+        }

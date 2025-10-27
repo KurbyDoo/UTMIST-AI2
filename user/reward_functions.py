@@ -102,17 +102,10 @@ def danger_zone_reward(
 def in_state_reward(
     env: WarehouseBrawl,
     desired_state: Type[PlayerObjectState] = BackDashState,
+    is_penalty: bool = False
 ) -> float:
     """
-    Applies a penalty for every time frame player surpases a certain height threshold in the environment.
-
-    Args:
-        env (WarehouseBrawl): The game environment.
-        zone_penalty (int): The penalty applied when the player is in the danger zone.
-        zone_height (float): The height threshold defining the danger zone.
-
-    Returns:
-        float: The computed penalty as a tensor.
+    Applies a penalty for every time frame player is in a specific state.
     """
     # Get player object from the environment
     player: Player = env.objects["player"]
@@ -120,7 +113,7 @@ def in_state_reward(
     # Apply penalty if the player is in the danger zone
     reward = 1 if isinstance(player.state, desired_state) else 0.0
 
-    return reward * env.dt
+    return (reward * env.dt) * (-1 if is_penalty else 1)
 
 
 def head_to_middle_reward(
@@ -155,13 +148,6 @@ def head_to_opponent(
     player: Player = env.objects["player"]
     opponent: Player = env.objects["opponent"]
 
-    # Apply penalty if the player is in the danger zone
-    # multiplier = -1 if player.body.position.x > opponent.body.position.x else 1
-    # reward = multiplier * (player.body.position.x - player.prev_x)
-    # self.prev_x = self.body.position.x
-    # self.prev_y = self.body.position.y
-    # self.damage_velocity = (0, 0)
-    # self.target_vel = (0, 0)
     player_dir = player.body.position.x - player.prev_x
     opponent_dir = opponent.body.position.x - player.body.position.x
 
@@ -178,22 +164,45 @@ def holding_more_than_3_keys(
     # Apply penalty if the player is holding more than 3 keys
     a = player.cur_action
     if (a > 0.5).sum() > 3:
-        return env.dt
-    return 0
+        return -env.dt
+    return env.dt
 
+
+def penalize_far_attack(env: WarehouseBrawl, max_attack_distance: float = 2.0) -> float:
+    """
+    Penalizes the player for attacking when far from the opponent.
+    
+    Args:
+        env: The game environment
+        max_attack_distance: Maximum distance where attacking is acceptable (in world units)
+    
+    Returns:
+        float: Penalty if attacking while far, 0 otherwise
+    """
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+
+    if isinstance(player.state, KOState) or isinstance(opponent.state, KOState):
+        return 0.0
+
+    is_attacking = isinstance(player.state, AttackState)
+    if not is_attacking: return 0.0
+    distance = abs(player.body.position.x - opponent.body.position.x)
+
+    if distance > max_attack_distance:
+        penalty = -(distance - max_attack_distance) / 5.0
+        return max(penalty, -1.0)
+
+    return 0.0
 
 def on_win_reward(env: WarehouseBrawl, agent: str) -> float:
-    if agent == 'player':
-        return 1.0
-    else:
-        return -1.0
+    if agent == 'player': return 1.0
+    else: return -1.0
 
 
 def on_knockout_reward(env: WarehouseBrawl, agent: str) -> float:
-    if agent == 'player':
-        return -10.0
-    else:
-        return 1.0
+    if agent == 'player': return -1.0
+    else: return 1.0
 
 
 def on_equip_reward(env: WarehouseBrawl, agent: str) -> float:
@@ -224,3 +233,89 @@ def in_air_reward(env: WarehouseBrawl) -> float:
     if isinstance(player_state, InAirState):
         return -1.0
     return 1
+
+
+def avoid_falling_reward(env: WarehouseBrawl) -> float:
+    player: Player = env.objects["player"]
+
+    if isinstance(player.state, KOState):
+        return 0.0
+
+    p_x = player.body.position.x
+    if abs(p_x) > 6.5:
+        return -1.0 * env.dt
+
+    elif abs(p_x) > 5.0:
+        return -0.5 * env.dt
+    
+    elif abs(player.body.position.x) < 2.5:
+        platform: Stage = env.objects['platform1']
+        # if abs(platform.body.position.x - player.body.position.x) > 0.5:
+        #     reward += 1.0 if p_vx * platform.velocity_x > 0 else -2.0
+        
+        if platform.body.position.y < player.body.position.y:
+            return -0.5 * env.dt
+        else:
+            return 0.2 * env.dt
+    return 0
+    
+
+def norm_op_dist(env: WarehouseBrawl) -> float:
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+
+    if isinstance(player.state, KOState) or isinstance(opponent.state, KOState):
+        return 0.0
+
+    max_dist = 13
+    x_diff = abs(opponent.body.position.x - player.body.position.x)
+    y_diff = abs(opponent.body.position.y - player.body.position.y)
+
+    return -(x_diff + y_diff) * env.dt / max_dist
+
+        
+### Curriculum rewards
+def pit_avoidance_reward(env: WarehouseBrawl) -> float:
+    """Applies a continuous, strong penalty for being in the center pit zone."""
+    player: Player = env.objects["player"]
+    if isinstance(player.state, KOState):
+        return 0.0
+
+    # The pit is roughly between x=-2.5 and x=2.5
+    if abs(player.body.position.x) < 2.5:
+        return -1.5 * env.dt
+    return 0.0
+
+def edge_avoidance_reward(env: WarehouseBrawl) -> float:
+    """Applies a continuous, strong penalty for being near the edges."""
+    player: Player = env.objects["player"]
+    if isinstance(player.state, KOState):
+        return 0.0
+
+    # The pit is roughly between x=-2.5 and x=2.5
+    if abs(player.body.position.x) > 5.5:
+        return -1.0 * env.dt
+    return 0.0
+
+
+def safe_platform_reward(env: WarehouseBrawl) -> float:
+    """Gives a positive reward for being on the two main platforms."""
+    player: Player = env.objects["player"]
+    if isinstance(player.state, KOState):
+        return 0.0
+
+    x_pos = abs(player.body.position.x)
+    # The safe zones are roughly between 2.5 and 5.5 on either side
+    if 2.5 <= x_pos <= 5.5:
+        return 0.5 * env.dt
+    return 0.0
+
+def avoid_taunt(env: WarehouseBrawl) -> float:
+    """Taunting blocks all other inputs creating noise."""
+    return in_state_reward(env, TauntState, True)
+
+### Stage 2
+
+def stand_still_penalty(env: WarehouseBrawl) -> float:
+    """Avoid standing still."""
+    return in_state_reward(env, StandingState, True)

@@ -671,12 +671,12 @@ class Camera():
             self.key_panel_1.draw(self, env.cur_action[0])
             self.key_panel_2.draw(self, env.cur_action[1])
 
-        img = np.transpose(
-                np.array(pygame.surfarray.pixels3d(self.canvas)), axes=(1, 0, 2)
-            )
+        # img = np.transpose(
+        #         np.array(pygame.surfarray.pixels3d(self.canvas)), axes=(1, 0, 2)
+        #     )
 
-        # img = np.array(pygame.surfarray.pixels3d(self.canvas)).swapaxes(0, 1)[:, ::-1, :]
-        # img = np.rot90(img, k=1)  
+        img = np.array(pygame.surfarray.pixels3d(self.canvas)).swapaxes(0, 1)[:, ::-1, :]
+        img = np.rot90(img, k=1)  
 
         if mode == RenderMode.PYGAME_WINDOW:
             pygame.display.flip()
@@ -852,7 +852,7 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
         self.train_mode = train_mode
 
         self.agents = [0, 1] # Agent 0, agent 1
-        self.logger = ['', '']
+        self.logger = [{}, {}]
 
         # Params
         self.fps = 30
@@ -1068,7 +1068,7 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
         self.cur_action = action
         self.rewards = {agent: 0 for agent in self.agents}
         self.terminated = False
-        self.logger = ['', '']
+        self.logger = [{}, {}]
 
         self.camera.process()
 
@@ -3907,8 +3907,8 @@ class Player(GameObject):
         #self.direction = [action[0] - action[1], action[2] - action[3]]
 
         # Reward: TO DELETE
-        multiple = 1 if self.body.position.x < 0 else -1
-        self.env.add_reward(self.agent_id, multiple * (self.body.position.x - self.prev_x))
+        # multiple = 1 if self.body.position.x < 0 else -1
+        # self.env.add_reward(self.agent_id, multiple * (self.body.position.x - self.prev_x))
 
     def physics_process(self, delta: float) -> None:
         new_state: PlayerObjectState = self.state.physics_process(delta)
@@ -3926,11 +3926,12 @@ class Player(GameObject):
             self.state = new_state
             self.state.enter()
         log = {
-            'transition': self.state_str
+            'transition': self.state_str,
         }
 
         if hasattr(self.state, 'move_type'):
             log['move_type'] = self.state.move_type
+            
         self.env.logger[self.agent_id] = log
 
         #self.body.velocity = pymunk.Vec2d(self.direction[0] * self.move_speed, self.body.velocity.y)
@@ -4527,7 +4528,7 @@ class DroppedWeaponSpawner(WeaponSpawner):
 
         if not pressed or not collided: return False
       
-        print(f'[ENV] pickup {w.name}, {pressed}, {collided}')
+        # print(f'[ENV] pickup {w.name}, {pressed}, {collided}')
         player.weapon = w.name #kaden
         player.env.weapon_equip_signal.emit(agent='player' if player.agent_id == 0 else 'opponent')#kaden
             # --- NEW: VFX pickup one-shot -> hidden
@@ -4603,7 +4604,7 @@ class DroppedWeaponSpawner(WeaponSpawner):
                     player.pickup_lock_until = wb.steps + 15  # ~0.25s at 60fps; tweak
 
 
-                    print(f"[FRAME {wb.steps}] Player {idx} dropped '{current_weapon}' spawner at {pos} (id {new_id}).")
+                    # print(f"[FRAME {wb.steps}] Player {idx} dropped '{current_weapon}' spawner at {pos} (id {new_id}).")
                     #kaden
                     # player loses weapon → back to Punch
                     player.weapon = "Punch"
