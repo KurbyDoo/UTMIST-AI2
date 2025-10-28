@@ -614,6 +614,10 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
             reward = rewards[0]
         else:
             reward = self.reward_manager.process(self.raw_env, 1 / 30.0)
+            total_reward = self.raw_env.logger[0].get("total_reward", -float('inf'))
+            if self.save_handler.num_timesteps % 100 == 0:
+                self.save_handler.training_logger.info(f"{total_reward} {reward} {self.save_handler.num_timesteps}")
+
 
         return observations[0], reward, terminated, truncated, info
 

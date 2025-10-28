@@ -296,13 +296,18 @@ class CustomAgent(Agent):
 def train_stage(my_agent, save_name, stage_number):
     match stage_number:
         case 0:
-            reward_manager = StopFallingCurriculum()
+            reward_manager = BasicMovementCurriculum()
             save_freq = 40_500
             total_iterations = 405_000
         case 1:
+            reward_manager = StopFallingCurriculum()
+            save_freq = 40_500
+            total_iterations = 405_000
+        case 2:
             reward_manager = TowardsOpponentCurriculum()
-            save_freq = 81_000
-            total_iterations = 810_000
+            save_freq = 40_500
+            total_iterations = 405_000
+            
     
     save_path = 'checkpoints'
     run_name = f'{save_name}_stage_{stage_number}'
@@ -344,7 +349,7 @@ def train_basic_curriculum(start_stage: int = 0, file_path: str | None = None):
     else:
         my_agent = RecurrentPPOAgent()
 
-    save_name = "curriculum_two_stage_v3"
+    save_name = "curr_move_no_taunt"
 
     # Stage 1
     for stage_number in range(start_stage, 2):
@@ -365,4 +370,4 @@ if __name__ == '__main__':
     # Create agent
     # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
-    train_basic_curriculum(start_stage=1, file_path='checkpoints/curriculum_two_stage_v3_stage_0/rl_model_405000_steps.zip')
+    train_basic_curriculum()

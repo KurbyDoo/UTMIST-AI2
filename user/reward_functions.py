@@ -314,6 +314,25 @@ def avoid_taunt(env: WarehouseBrawl) -> float:
     """Taunting blocks all other inputs creating noise."""
     return in_state_reward(env, TauntState, True)
 
+
+def avoid_holding_opposite_keys(env: WarehouseBrawl) -> float:
+    """Stop agent from holding 'A' and 'D' keys at the same time"""
+    player: Player = env.objects["player"]
+    actions = player.cur_action
+
+    # Actions are [Move Left, Move Right, Jump, Attack, Special, Taunt]
+    # We assume a threshold of 0.5 to consider a key "pressed"
+    move_left_pressed = actions[0] > 0.5
+    move_right_pressed = actions[1] > 0.5
+
+    if move_left_pressed and move_right_pressed:
+        # Apply a penalty for each frame this occurs
+        return -1.0 * env.dt
+    
+    if move_left_pressed or move_right_pressed:
+        return 3.0 * env.dt
+
+    return 0.0
 ### Stage 2
 
 def stand_still_penalty(env: WarehouseBrawl) -> float:
