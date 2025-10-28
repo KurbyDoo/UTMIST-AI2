@@ -845,12 +845,14 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
         self.stage_height_tiles: float = 16.8
         self.number_of_platforms: int = 2
 
+        self.setup_iteration = 0
+
         self.mode = mode
         self.resolution = resolution
         self.train_mode = train_mode
 
         self.agents = [0, 1] # Agent 0, agent 1
-        self.logger = ['', '']
+        self.logger = [{}, {}]
 
         # Params
         self.fps = 30
@@ -889,7 +891,6 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
 
         
         self.load_attacks()
-
         self.reset()
 
     def get_observation_space(self):
@@ -1067,7 +1068,7 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
         self.cur_action = action
         self.rewards = {agent: 0 for agent in self.agents}
         self.terminated = False
-        self.logger = ['', '']
+        self.logger = [{}, {}]
 
         self.camera.process()
 
@@ -1277,6 +1278,8 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
 
     def _setup(self):
         # Collision fix - prevent players from colliding with each other
+        self.setup_iteration += 1
+        print(f"[ENV] Setup #{self.setup_iteration}")
        
         handler = self.space.add_collision_handler(PLAYER, PLAYER + 1)
         handler.begin = lambda *args, **kwargs: False
@@ -3579,9 +3582,12 @@ class Player(GameObject):
 
         data_path = "assets.zip"
         if not os.path.isfile(data_path):
-            print("Downloading assets.zip...")
+            print("[ENV] Downloading assets.zip...")
             url = "https://drive.google.com/file/d/1F2MJQ5enUPVtyi3s410PUuv8LiWr8qCz/view?usp=sharing"
             gdown.download(url, output=data_path, fuzzy=True)
+
+        # check if directory
+        # print("[ENV] Assets Downloaded!")
 
         self.assets_loaded = True
 
@@ -3901,8 +3907,8 @@ class Player(GameObject):
         #self.direction = [action[0] - action[1], action[2] - action[3]]
 
         # Reward: TO DELETE
-        multiple = 1 if self.body.position.x < 0 else -1
-        self.env.add_reward(self.agent_id, multiple * (self.body.position.x - self.prev_x))
+        # multiple = 1 if self.body.position.x < 0 else -1
+        # self.env.add_reward(self.agent_id, multiple * (self.body.position.x - self.prev_x))
 
     def physics_process(self, delta: float) -> None:
         new_state: PlayerObjectState = self.state.physics_process(delta)
@@ -3920,11 +3926,12 @@ class Player(GameObject):
             self.state = new_state
             self.state.enter()
         log = {
-            'transition': self.state_str
+            'transition': self.state_str,
         }
 
         if hasattr(self.state, 'move_type'):
             log['move_type'] = self.state.move_type
+            
         self.env.logger[self.agent_id] = log
 
         #self.body.velocity = pymunk.Vec2d(self.direction[0] * self.move_speed, self.body.velocity.y)
@@ -4240,7 +4247,7 @@ class WeaponSpawner:
 
         
         if not pressed or not collided: return False
-        print(f'collided {w.name}, {pressed}, {collided}')
+        print(f'[ENV] collided {w.name}, {pressed}, {collided}')
         player.weapon = w.name #kaden
         player.env.weapon_equip_signal.emit(agent='player' if player.agent_id == 0 else 'opponent')#kaden
 
@@ -4521,7 +4528,7 @@ class DroppedWeaponSpawner(WeaponSpawner):
 
         if not pressed or not collided: return False
       
-        print(f'pickup {w.name}, {pressed}, {collided}')
+        # print(f'[ENV] pickup {w.name}, {pressed}, {collided}')
         player.weapon = w.name #kaden
         player.env.weapon_equip_signal.emit(agent='player' if player.agent_id == 0 else 'opponent')#kaden
             # --- NEW: VFX pickup one-shot -> hidden
@@ -4597,7 +4604,7 @@ class DroppedWeaponSpawner(WeaponSpawner):
                     player.pickup_lock_until = wb.steps + 15  # ~0.25s at 60fps; tweak
 
 
-                    print(f"[FRAME {wb.steps}] Player {idx} dropped '{current_weapon}' spawner at {pos} (id {new_id}).")
+                    # print(f"[FRAME {wb.steps}] Player {idx} dropped '{current_weapon}' spawner at {pos} (id {new_id}).")
                     #kaden
                     # player loses weapon → back to Punch
                     player.weapon = "Punch"

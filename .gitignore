@@ -18,6 +18,8 @@ assets.zip
 # Videos, zip files, or csv
 *.mp4
 *.zip
+!/saved_agents/*.zip
+!/saved_agents/*.mp4
 *.csv# macOS
 .DS_Store
 

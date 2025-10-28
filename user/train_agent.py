@@ -13,23 +13,28 @@ b) Continue training from a specific timestep given an input `file_path`
 # ----------------------------- IMPORTS -----------------------------
 # -------------------------------------------------------------------
 
-import torch 
+from user.reward_agents import *
+import torch
 import gymnasium as gym
 from torch.nn import functional as F
 from torch import nn as nn
 import numpy as np
 import pygame
-from stable_baselines3 import A2C, PPO, SAC, DQN, DDPG, TD3, HER 
+import time
+from stable_baselines3 import A2C, PPO, SAC, DQN, DDPG, TD3, HER
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
-from environment.agent import *
+# TODO: Fix name conflicts
+# from environment.agent import *
+from environment.agent import Agent
 from typing import Optional, Type, List, Tuple
 
 # -------------------------------------------------------------------------
 # ----------------------------- AGENT CLASSES -----------------------------
 # -------------------------------------------------------------------------
+
 
 class SB3Agent(Agent):
     '''
@@ -39,6 +44,7 @@ class SB3Agent(Agent):
     - For all SB3 classes, if you'd like to define your own neural network policy you can modify the `policy_kwargs` parameter in `self.sb3_class()` or make a custom SB3 `BaseFeaturesExtractor`
     You can refer to this for Custom Policy: https://stable-baselines3.readthedocs.io/en/master/guide/custom_policy.html
     '''
+
     def __init__(
             self,
             sb3_class: Optional[Type[BaseAlgorithm]] = PPO,
@@ -49,7 +55,8 @@ class SB3Agent(Agent):
 
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = self.sb3_class("MlpPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
+            self.model = self.sb3_class(
+                "MlpPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
             del self.env
         else:
             self.model = self.sb3_class.load(self.file_path)
@@ -58,8 +65,8 @@ class SB3Agent(Agent):
         # Call gdown to your link
         return
 
-    #def set_ignore_grad(self) -> None:
-        #self.model.set_ignore_act_grad(True)
+    # def set_ignore_grad(self) -> None:
+        # self.model.set_ignore_act_grad(True)
 
     def predict(self, obs):
         action, _ = self.model.predict(obs)
@@ -76,56 +83,6 @@ class SB3Agent(Agent):
             log_interval=log_interval,
         )
 
-class RecurrentPPOAgent(Agent):
-    '''
-    RecurrentPPOAgent:
-    - Defines an RL Agent that uses the Recurrent PPO (LSTM+PPO) algorithm
-    '''
-    def __init__(
-            self,
-            file_path: Optional[str] = None
-    ):
-        super().__init__(file_path)
-        self.lstm_states = None
-        self.episode_starts = np.ones((1,), dtype=bool)
-
-    def _initialize(self) -> None:
-        if self.file_path is None:
-            policy_kwargs = {
-                'activation_fn': nn.ReLU,
-                'lstm_hidden_size': 512,
-                'net_arch': [dict(pi=[32, 32], vf=[32, 32])],
-                'shared_lstm': True,
-                'enable_critic_lstm': False,
-                'share_features_extractor': True,
-
-            }
-            self.model = RecurrentPPO("MlpLstmPolicy",
-                                      self.env,
-                                      verbose=0,
-                                      n_steps=30*90*20,
-                                      batch_size=16,
-                                      ent_coef=0.05,
-                                      policy_kwargs=policy_kwargs)
-            del self.env
-        else:
-            self.model = RecurrentPPO.load(self.file_path)
-
-    def reset(self) -> None:
-        self.episode_starts = True
-
-    def predict(self, obs):
-        action, self.lstm_states = self.model.predict(obs, state=self.lstm_states, episode_start=self.episode_starts, deterministic=True)
-        if self.episode_starts: self.episode_starts = False
-        return action
-
-    def save(self, file_path: str) -> None:
-        self.model.save(file_path)
-
-    def learn(self, env, total_timesteps, log_interval: int = 2, verbose=0):
-        self.model.set_env(env)
-        self.model.verbose = verbose
-        self.model.learn(total_timesteps=total_timesteps, log_interval=log_interval)
 
 class BasedAgent(Agent):
     '''
@@ -133,6 +90,7 @@ class BasedAgent(Agent):
     - Defines a hard-coded Agent that predicts actions based on if-statements. Interesting behaviour can be achieved here.
     - The if-statement algorithm can be developed within the `predict` method below.
     '''
+
     def __init__(
             self,
             *args,
@@ -170,11 +128,13 @@ class BasedAgent(Agent):
             action = self.act_helper.press_keys(['j'], action)
         return action
 
+
 class UserInputAgent(Agent):
     '''
     UserInputAgent:
     - Defines an Agent that performs actions entirely via real-time player input
     '''
+
     def __init__(
             self,
             *args,
@@ -184,7 +144,7 @@ class UserInputAgent(Agent):
 
     def predict(self, obs):
         action = self.act_helper.zeros()
-       
+
         keys = pygame.key.get_pressed()
         if keys[pygame.K_w]:
             action = self.act_helper.press_keys(['w'], action)
@@ -210,11 +170,13 @@ class UserInputAgent(Agent):
 
         return action
 
+
 class ClockworkAgent(Agent):
     '''
     ClockworkAgent:
     - Defines an Agent that performs sequential steps of [duration, action]
     '''
+
     def __init__(
             self,
             action_sheet: Optional[List[Tuple[int, List[str]]]] = None,
@@ -254,7 +216,8 @@ class ClockworkAgent(Agent):
         action = self.act_helper.press_keys(self.current_action_data)
         self.steps += 1  # Increment step counter
         return action
-    
+
+
 class MLPPolicy(nn.Module):
     def __init__(self, obs_dim: int = 64, action_dim: int = 10, hidden_dim: int = 64):
         """
@@ -279,37 +242,43 @@ class MLPPolicy(nn.Module):
         x = F.relu(self.fc2(x))
         return self.fc3(x)
 
+
 class MLPExtractor(BaseFeaturesExtractor):
     '''
     Class that defines an MLP Base Features Extractor
     '''
+
     def __init__(self, observation_space: gym.Space, features_dim: int = 64, hidden_dim: int = 64):
         super(MLPExtractor, self).__init__(observation_space, features_dim)
         self.model = MLPPolicy(
-            obs_dim=observation_space.shape[0], 
+            obs_dim=observation_space.shape[0],
             action_dim=10,
             hidden_dim=hidden_dim,
         )
-    
+
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         return self.model(obs)
-    
+
     @classmethod
     def get_policy_kwargs(cls, features_dim: int = 64, hidden_dim: int = 64) -> dict:
         return dict(
             features_extractor_class=cls,
-            features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim) #NOTE: features_dim = 10 to match action space output
+            # NOTE: features_dim = 10 to match action space output
+            features_extractor_kwargs=dict(
+                features_dim=features_dim, hidden_dim=hidden_dim)
         )
-    
+
+
 class CustomAgent(Agent):
     def __init__(self, sb3_class: Optional[Type[BaseAlgorithm]] = PPO, file_path: str = None, extractor: BaseFeaturesExtractor = None):
         self.sb3_class = sb3_class
         self.extractor = extractor
         super().__init__(file_path)
-    
+
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = self.sb3_class("MlpPolicy", self.env, policy_kwargs=self.extractor.get_policy_kwargs(), verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
+            self.model = self.sb3_class("MlpPolicy", self.env, policy_kwargs=self.extractor.get_policy_kwargs(
+            ), verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
             del self.env
         else:
             self.model = self.sb3_class.load(self.file_path)
@@ -318,8 +287,8 @@ class CustomAgent(Agent):
         # Call gdown to your link
         return
 
-    #def set_ignore_grad(self) -> None:
-        #self.model.set_ignore_act_grad(True)
+    # def set_ignore_grad(self) -> None:
+        # self.model.set_ignore_act_grad(True)
 
     def predict(self, obs):
         action, _ = self.model.predict(obs)
@@ -336,230 +305,80 @@ class CustomAgent(Agent):
             log_interval=log_interval,
         )
 
-# --------------------------------------------------------------------------------
-# ----------------------------- REWARD FUNCTIONS API -----------------------------
-# --------------------------------------------------------------------------------
-
-'''
-Example Reward Functions:
-- Find more [here](https://colab.research.google.com/drive/1qMs336DclBwdn6JBASa5ioDIfvenW8Ha?usp=sharing#scrollTo=-XAOXXMPTiHJ).
-'''
-
-def base_height_l2(
-    env: WarehouseBrawl,
-    target_height: float,
-    obj_name: str = 'player'
-) -> float:
-    """Penalize asset height from its target using L2 squared kernel.
-
-    Note:
-        For flat terrain, target height is in the world frame. For rough terrain,
-        sensor readings can adjust the target height to account for the terrain.
-    """
-    # Extract the used quantities (to enable type-hinting)
-    obj: GameObject = env.objects[obj_name]
-
-    # Compute the L2 squared penalty
-    return (obj.body.position.y - target_height)**2
-
-class RewardMode(Enum):
-    ASYMMETRIC_OFFENSIVE = 0
-    SYMMETRIC = 1
-    ASYMMETRIC_DEFENSIVE = 2
-
-def damage_interaction_reward(
-    env: WarehouseBrawl,
-    mode: RewardMode = RewardMode.SYMMETRIC,
-) -> float:
-    """
-    Computes the reward based on damage interactions between players.
-
-    Modes:
-    - ASYMMETRIC_OFFENSIVE (0): Reward is based only on damage dealt to the opponent
-    - SYMMETRIC (1): Reward is based on both dealing damage to the opponent and avoiding damage
-    - ASYMMETRIC_DEFENSIVE (2): Reward is based only on avoiding damage
-
-    Args:
-        env (WarehouseBrawl): The game environment
-        mode (DamageRewardMode): Reward mode, one of DamageRewardMode
-
-    Returns:
-        float: The computed reward.
-    """
-    # Getting player and opponent from the enviornment
-    player: Player = env.objects["player"]
-    opponent: Player = env.objects["opponent"]
-
-    # Reward dependent on the mode
-    damage_taken = player.damage_taken_this_frame
-    damage_dealt = opponent.damage_taken_this_frame
-
-    if mode == RewardMode.ASYMMETRIC_OFFENSIVE:
-        reward = damage_dealt
-    elif mode == RewardMode.SYMMETRIC:
-        reward = damage_dealt - damage_taken
-    elif mode == RewardMode.ASYMMETRIC_DEFENSIVE:
-        reward = -damage_taken
-    else:
-        raise ValueError(f"Invalid mode: {mode}")
-
-    return reward / 140
+# -------------------------------------------------------------------------
+# -------------------------- Curriculum Training --------------------------
+# -------------------------------------------------------------------------
 
 
-# In[ ]:
+def train_stage(my_agent, save_name, stage_number):
+    match stage_number:
+        case 0:
+            reward_manager = BasicMovementCurriculum()
+            save_freq = 40_500
+            total_iterations = 405_000
+        case 1:
+            reward_manager = StopFallingCurriculum()
+            save_freq = 40_500
+            total_iterations = 405_000
+        case 2:
+            reward_manager = TowardsOpponentCurriculum()
+            save_freq = 40_500
+            total_iterations = 405_000
 
+    save_path = 'checkpoints'
+    run_name = f'{save_name}_stage_{stage_number}'
 
-def danger_zone_reward(
-    env: WarehouseBrawl,
-    zone_penalty: int = 1,
-    zone_height: float = 4.2
-) -> float:
-    """
-    Applies a penalty for every time frame player surpases a certain height threshold in the environment.
+    # Set save settings here:
 
-    Args:
-        env (WarehouseBrawl): The game environment.
-        zone_penalty (int): The penalty applied when the player is in the danger zone.
-        zone_height (float): The height threshold defining the danger zone.
+    # update saveMode depending on if agent exists
+    saveMode = SaveHandlerMode.RESUME
+    if my_agent.file_path is None:
+        saveMode = SaveHandlerMode.FORCE
 
-    Returns:
-        float: The computed penalty as a tensor.
-    """
-    # Get player object from the environment
-    player: Player = env.objects["player"]
+    save_handler = SaveHandler(
+        agent=my_agent,  # Agent to save
+        save_freq=save_freq,  # Save frequency
+        max_saved=20,  # Maximum number of saved models
+        save_path=save_path,  # Save path
+        run_name=run_name,
+        mode=saveMode  # Save mode, FORCE or RESUME
+    )
 
-    # Apply penalty if the player is in the danger zone
-    reward = -zone_penalty if player.body.position.y >= zone_height else 0.0
-
-    return reward * env.dt
-
-def in_state_reward(
-    env: WarehouseBrawl,
-    desired_state: Type[PlayerObjectState]=BackDashState,
-) -> float:
-    """
-    Applies a penalty for every time frame player surpases a certain height threshold in the environment.
-
-    Args:
-        env (WarehouseBrawl): The game environment.
-        zone_penalty (int): The penalty applied when the player is in the danger zone.
-        zone_height (float): The height threshold defining the danger zone.
-
-    Returns:
-        float: The computed penalty as a tensor.
-    """
-    # Get player object from the environment
-    player: Player = env.objects["player"]
-
-    # Apply penalty if the player is in the danger zone
-    reward = 1 if isinstance(player.state, desired_state) else 0.0
-
-    return reward * env.dt
-
-def head_to_middle_reward(
-    env: WarehouseBrawl,
-) -> float:
-    """
-    Applies a penalty for every time frame player surpases a certain height threshold in the environment.
-
-    Args:
-        env (WarehouseBrawl): The game environment.
-        zone_penalty (int): The penalty applied when the player is in the danger zone.
-        zone_height (float): The height threshold defining the danger zone.
-
-    Returns:
-        float: The computed penalty as a tensor.
-    """
-    # Get player object from the environment
-    player: Player = env.objects["player"]
-
-    # Apply penalty if the player is in the danger zone
-    multiplier = -1 if player.body.position.x > 0 else 1
-    reward = multiplier * (player.body.position.x - player.prev_x)
-
-    return reward
-
-def head_to_opponent(
-    env: WarehouseBrawl,
-) -> float:
-
-    # Get player object from the environment
-    player: Player = env.objects["player"]
-    opponent: Player = env.objects["opponent"]
-
-    # Apply penalty if the player is in the danger zone
-    multiplier = -1 if player.body.position.x > opponent.body.position.x else 1
-    reward = multiplier * (player.body.position.x - player.prev_x)
-
-    return reward
-
-def holding_more_than_3_keys(
-    env: WarehouseBrawl,
-) -> float:
-
-    # Get player object from the environment
-    player: Player = env.objects["player"]
-
-    # Apply penalty if the player is holding more than 3 keys
-    a = player.cur_action
-    if (a > 0.5).sum() > 3:
-        return env.dt
-    return 0
-
-def on_win_reward(env: WarehouseBrawl, agent: str) -> float:
-    if agent == 'player':
-        return 1.0
-    else:
-        return -1.0
-
-def on_knockout_reward(env: WarehouseBrawl, agent: str) -> float:
-    if agent == 'player':
-        return -1.0
-    else:
-        return 1.0
-    
-def on_equip_reward(env: WarehouseBrawl, agent: str) -> float:
-    if agent == "player":
-        if env.objects["player"].weapon == "Hammer":
-            return 2.0
-        elif env.objects["player"].weapon == "Spear":
-            return 1.0
-    return 0.0
-
-def on_drop_reward(env: WarehouseBrawl, agent: str) -> float:
-    if agent == "player":
-        if env.objects["player"].weapon == "Punch":
-            return -1.0
-    return 0.0
-
-def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
-    if agent == 'player':
-        return -1.0
-    else:
-        return 1.0
-
-'''
-Add your dictionary of RewardFunctions here using RewTerms
-'''
-def gen_reward_manager():
-    reward_functions = {
-        #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
-        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.5),
-        'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
-        #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
-        #'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.05),
-        'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
-        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.01),
-        #'taunt_reward': RewTerm(func=in_state_reward, weight=0.2, params={'desired_state': TauntState}),
+    # Set opponent settings here:
+    opponent_specification = {
+        'constant_agent': (1, partial(ConstantAgent)),
     }
-    signal_subscriptions = {
-        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=50)),
-        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=8)),
-        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=5)),
-        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=10)),
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=15))
-    }
-    return RewardManager(reward_functions, signal_subscriptions)
+    opponent_cfg = OpponentsCfg(opponents=opponent_specification)
+
+    train(
+        my_agent,
+        reward_manager,
+        save_handler,
+        opponent_cfg,
+        CameraResolution.LOW,
+        train_timesteps=total_iterations,
+        train_logging=TrainLogging.PLOT,
+        render_every=50
+    )
+
+    return f'{save_path}/{run_name}/rl_model_{total_iterations}_steps'
+
+
+def train_basic_curriculum(start_stage: int = 0, file_path: str | None = None):
+    if file_path is not None:
+        my_agent = RecurrentPPOAgent(
+            file_path=file_path
+        )
+    else:
+        my_agent = RecurrentPPOAgent()
+
+    save_name = "curr_move_no_taunt"
+
+    # Stage 1
+    for stage_number in range(start_stage, 2):
+        last_save = train_stage(my_agent, save_name, stage_number)
+        my_agent = RecurrentPPOAgent(file_path=last_save)
+
 
 # -------------------------------------------------------------------------
 # ----------------------------- MAIN FUNCTION -----------------------------
@@ -567,47 +386,10 @@ def gen_reward_manager():
 '''
 The main function runs training. You can change configurations such as the Agent type or opponent specifications here.
 '''
+
+
 if __name__ == '__main__':
     # Create agent
-    my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
+    # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
-    # Start here if you want to train from scratch. e.g:
-    #my_agent = RecurrentPPOAgent()
-
-    # Start here if you want to train from a specific timestep. e.g:
-    #my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_3/rl_model_120006_steps.zip')
-
-    # Reward manager
-    reward_manager = gen_reward_manager()
-    # Self-play settings
-    selfplay_handler = SelfPlayRandom(
-        partial(type(my_agent)), # Agent class and its keyword arguments
-                                 # type(my_agent) = Agent class
-    )
-
-    # Set save settings here:
-    save_handler = SaveHandler(
-        agent=my_agent, # Agent to save
-        save_freq=100_000, # Save frequency
-        max_saved=40, # Maximum number of saved models
-        save_path='checkpoints', # Save path
-        run_name='experiment_9',
-        mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
-    )
-
-    # Set opponent settings here:
-    opponent_specification = {
-                    'self_play': (8, selfplay_handler),
-                    'constant_agent': (0.5, partial(ConstantAgent)),
-                    'based_agent': (1.5, partial(BasedAgent)),
-                }
-    opponent_cfg = OpponentsCfg(opponents=opponent_specification)
-
-    train(my_agent,
-        reward_manager,
-        save_handler,
-        opponent_cfg,
-        CameraResolution.LOW,
-        train_timesteps=1_000_000_000,
-        train_logging=TrainLogging.PLOT
-    )
+    train_basic_curriculum()
