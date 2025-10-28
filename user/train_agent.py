@@ -13,14 +13,15 @@ b) Continue training from a specific timestep given an input `file_path`
 # ----------------------------- IMPORTS -----------------------------
 # -------------------------------------------------------------------
 
-import torch 
+from user.reward_agents import *
+import torch
 import gymnasium as gym
 from torch.nn import functional as F
 from torch import nn as nn
 import numpy as np
 import pygame
 import time
-from stable_baselines3 import A2C, PPO, SAC, DQN, DDPG, TD3, HER 
+from stable_baselines3 import A2C, PPO, SAC, DQN, DDPG, TD3, HER
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -34,6 +35,7 @@ from typing import Optional, Type, List, Tuple
 # ----------------------------- AGENT CLASSES -----------------------------
 # -------------------------------------------------------------------------
 
+
 class SB3Agent(Agent):
     '''
     SB3Agent:
@@ -42,6 +44,7 @@ class SB3Agent(Agent):
     - For all SB3 classes, if you'd like to define your own neural network policy you can modify the `policy_kwargs` parameter in `self.sb3_class()` or make a custom SB3 `BaseFeaturesExtractor`
     You can refer to this for Custom Policy: https://stable-baselines3.readthedocs.io/en/master/guide/custom_policy.html
     '''
+
     def __init__(
             self,
             sb3_class: Optional[Type[BaseAlgorithm]] = PPO,
@@ -52,7 +55,8 @@ class SB3Agent(Agent):
 
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = self.sb3_class("MlpPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
+            self.model = self.sb3_class(
+                "MlpPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
             del self.env
         else:
             self.model = self.sb3_class.load(self.file_path)
@@ -61,8 +65,8 @@ class SB3Agent(Agent):
         # Call gdown to your link
         return
 
-    #def set_ignore_grad(self) -> None:
-        #self.model.set_ignore_act_grad(True)
+    # def set_ignore_grad(self) -> None:
+        # self.model.set_ignore_act_grad(True)
 
     def predict(self, obs):
         action, _ = self.model.predict(obs)
@@ -86,6 +90,7 @@ class BasedAgent(Agent):
     - Defines a hard-coded Agent that predicts actions based on if-statements. Interesting behaviour can be achieved here.
     - The if-statement algorithm can be developed within the `predict` method below.
     '''
+
     def __init__(
             self,
             *args,
@@ -123,11 +128,13 @@ class BasedAgent(Agent):
             action = self.act_helper.press_keys(['j'], action)
         return action
 
+
 class UserInputAgent(Agent):
     '''
     UserInputAgent:
     - Defines an Agent that performs actions entirely via real-time player input
     '''
+
     def __init__(
             self,
             *args,
@@ -137,7 +144,7 @@ class UserInputAgent(Agent):
 
     def predict(self, obs):
         action = self.act_helper.zeros()
-       
+
         keys = pygame.key.get_pressed()
         if keys[pygame.K_w]:
             action = self.act_helper.press_keys(['w'], action)
@@ -163,11 +170,13 @@ class UserInputAgent(Agent):
 
         return action
 
+
 class ClockworkAgent(Agent):
     '''
     ClockworkAgent:
     - Defines an Agent that performs sequential steps of [duration, action]
     '''
+
     def __init__(
             self,
             action_sheet: Optional[List[Tuple[int, List[str]]]] = None,
@@ -207,7 +216,8 @@ class ClockworkAgent(Agent):
         action = self.act_helper.press_keys(self.current_action_data)
         self.steps += 1  # Increment step counter
         return action
-    
+
+
 class MLPPolicy(nn.Module):
     def __init__(self, obs_dim: int = 64, action_dim: int = 10, hidden_dim: int = 64):
         """
@@ -232,37 +242,43 @@ class MLPPolicy(nn.Module):
         x = F.relu(self.fc2(x))
         return self.fc3(x)
 
+
 class MLPExtractor(BaseFeaturesExtractor):
     '''
     Class that defines an MLP Base Features Extractor
     '''
+
     def __init__(self, observation_space: gym.Space, features_dim: int = 64, hidden_dim: int = 64):
         super(MLPExtractor, self).__init__(observation_space, features_dim)
         self.model = MLPPolicy(
-            obs_dim=observation_space.shape[0], 
+            obs_dim=observation_space.shape[0],
             action_dim=10,
             hidden_dim=hidden_dim,
         )
-    
+
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         return self.model(obs)
-    
+
     @classmethod
     def get_policy_kwargs(cls, features_dim: int = 64, hidden_dim: int = 64) -> dict:
         return dict(
             features_extractor_class=cls,
-            features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim) #NOTE: features_dim = 10 to match action space output
+            # NOTE: features_dim = 10 to match action space output
+            features_extractor_kwargs=dict(
+                features_dim=features_dim, hidden_dim=hidden_dim)
         )
-    
+
+
 class CustomAgent(Agent):
     def __init__(self, sb3_class: Optional[Type[BaseAlgorithm]] = PPO, file_path: str = None, extractor: BaseFeaturesExtractor = None):
         self.sb3_class = sb3_class
         self.extractor = extractor
         super().__init__(file_path)
-    
+
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = self.sb3_class("MlpPolicy", self.env, policy_kwargs=self.extractor.get_policy_kwargs(), verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
+            self.model = self.sb3_class("MlpPolicy", self.env, policy_kwargs=self.extractor.get_policy_kwargs(
+            ), verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
             del self.env
         else:
             self.model = self.sb3_class.load(self.file_path)
@@ -271,8 +287,8 @@ class CustomAgent(Agent):
         # Call gdown to your link
         return
 
-    #def set_ignore_grad(self) -> None:
-        #self.model.set_ignore_act_grad(True)
+    # def set_ignore_grad(self) -> None:
+        # self.model.set_ignore_act_grad(True)
 
     def predict(self, obs):
         action, _ = self.model.predict(obs)
@@ -293,6 +309,7 @@ class CustomAgent(Agent):
 # -------------------------- Curriculum Training --------------------------
 # -------------------------------------------------------------------------
 
+
 def train_stage(my_agent, save_name, stage_number):
     match stage_number:
         case 0:
@@ -307,19 +324,24 @@ def train_stage(my_agent, save_name, stage_number):
             reward_manager = TowardsOpponentCurriculum()
             save_freq = 40_500
             total_iterations = 405_000
-            
-    
+
     save_path = 'checkpoints'
     run_name = f'{save_name}_stage_{stage_number}'
 
     # Set save settings here:
+
+    # update saveMode depending on if agent exists
+    saveMode = SaveHandlerMode.RESUME
+    if my_agent.file_path is None:
+        saveMode = SaveHandlerMode.FORCE
+
     save_handler = SaveHandler(
         agent=my_agent,  # Agent to save
         save_freq=save_freq,  # Save frequency
         max_saved=20,  # Maximum number of saved models
         save_path=save_path,  # Save path
         run_name=run_name,
-        mode=SaveHandlerMode.FORCE  # Save mode, FORCE or RESUME
+        mode=saveMode  # Save mode, FORCE or RESUME
     )
 
     # Set opponent settings here:
@@ -341,6 +363,7 @@ def train_stage(my_agent, save_name, stage_number):
 
     return f'{save_path}/{run_name}/rl_model_{total_iterations}_steps'
 
+
 def train_basic_curriculum(start_stage: int = 0, file_path: str | None = None):
     if file_path is not None:
         my_agent = RecurrentPPOAgent(
@@ -355,7 +378,7 @@ def train_basic_curriculum(start_stage: int = 0, file_path: str | None = None):
     for stage_number in range(start_stage, 2):
         last_save = train_stage(my_agent, save_name, stage_number)
         my_agent = RecurrentPPOAgent(file_path=last_save)
-    
+
 
 # -------------------------------------------------------------------------
 # ----------------------------- MAIN FUNCTION -----------------------------
@@ -364,7 +387,6 @@ def train_basic_curriculum(start_stage: int = 0, file_path: str | None = None):
 The main function runs training. You can change configurations such as the Agent type or opponent specifications here.
 '''
 
-from user.reward_agents import *
 
 if __name__ == '__main__':
     # Create agent
