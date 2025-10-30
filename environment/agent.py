@@ -489,8 +489,8 @@ class OpponentsCfg():
     """
     swap_steps: int = 10_000
     opponents: dict[str, Any] = field(default_factory=lambda: {
-        'random_agent': (0.8, partial(RandomAgent)),
-        'constant_agent': (0.2, partial(ConstantAgent)),
+        'random_agent': (0.0, partial(RandomAgent)),
+        'constant_agent': (1.0, partial(ConstantAgent)),
         # 'recurrent_agent': (0.1, partial(RecurrentPPOAgent, file_path='skibidi')),
     })
 

@@ -231,7 +231,7 @@ def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
 def in_air_reward(env: WarehouseBrawl) -> float:
     player_state = env.objects["player"].state
     if isinstance(player_state, InAirState):
-        return -1.0
+        return -0.5
     return 1
 
 
@@ -242,21 +242,16 @@ def avoid_falling_reward(env: WarehouseBrawl) -> float:
         return 0.0
 
     p_x = player.body.position.x
-    if abs(p_x) > 6.5:
+    if abs(p_x) >= 7.0:
         return -1.0 * env.dt
-
-    elif abs(p_x) > 5.0:
-        return -0.5 * env.dt
     
-    elif abs(player.body.position.x) < 2.5:
-        platform: Stage = env.objects['platform1']
+    elif abs(player.body.position.x) < 2.0:
+        platform1: Stage = env.objects['platform1']
         # if abs(platform.body.position.x - player.body.position.x) > 0.5:
         #     reward += 1.0 if p_vx * platform.velocity_x > 0 else -2.0
         
-        if platform.body.position.y < player.body.position.y:
-            return -0.5 * env.dt
-        else:
-            return 0.2 * env.dt
+        if platform1.body.position.y < player.body.position.y:
+            return -1.0 * env.dt
     return 0
     
 
@@ -283,7 +278,7 @@ def pit_avoidance_reward(env: WarehouseBrawl) -> float:
 
     # The pit is roughly between x=-2.5 and x=2.5
     if abs(player.body.position.x) < 2.5:
-        return -1.5 * env.dt
+        return -1.0 * env.dt
     return 0.0
 
 def edge_avoidance_reward(env: WarehouseBrawl) -> float:
@@ -293,10 +288,36 @@ def edge_avoidance_reward(env: WarehouseBrawl) -> float:
         return 0.0
 
     # The pit is roughly between x=-2.5 and x=2.5
-    if abs(player.body.position.x) > 5.5:
+    if abs(player.body.position.x) > 7.0:
         return -1.0 * env.dt
+
     return 0.0
 
+def safe_moving_platform_reward(env: WarehouseBrawl) -> float:
+    """Give reward for being on the moving platform"""
+    player: Player = env.objects["player"]
+    platform: Stage = env.objects["platform1"]
+
+    # if player is on moving platform
+    if abs(player.body.position.x - platform.body.position.x) < 1 and player.body.position.y < platform.body.position.y:
+        return 1.0 * env.dt
+    return 0.0
+
+def avoid_under_moving_platform(env: WarehouseBrawl) -> float:
+    """Punish being under the moving platform"""
+    player: Player = env.objects["player"]
+    platform: Stage = env.objects["platform1"]
+
+    # if player is under moving platform
+    if abs(player.body.position.x - platform.body.position.x) < 1 and player.body.position.y > platform.body.position.y:
+        return -1.0 * env.dt
+    return 0.0
+        
+def avoid_ko(env: WarehouseBrawl) -> float:
+    player: Player = env.objects["player"]
+    if isinstance(player.state, KOState):
+        return -1.0
+    return 0.0
 
 def safe_platform_reward(env: WarehouseBrawl) -> float:
     """Gives a positive reward for being on the two main platforms."""
@@ -312,7 +333,21 @@ def safe_platform_reward(env: WarehouseBrawl) -> float:
 
 def avoid_taunt(env: WarehouseBrawl) -> float:
     """Taunting blocks all other inputs creating noise."""
-    return in_state_reward(env, TauntState, True)
+
+    player : Player = env.objects["player"]
+
+    if player.input.key_status['g'].just_pressed:
+        return -1.0
+
+    return 0.0
+    # return in_state_reward(env, TauntState, True)
+
+# def avoid_bad_dash(env: WarehouseBrawl) -> float:
+
+#     player : Player = env.objects["player"]
+
+#     if player.input.key_status
+
 
 
 def avoid_holding_opposite_keys(env: WarehouseBrawl) -> float:
@@ -329,8 +364,8 @@ def avoid_holding_opposite_keys(env: WarehouseBrawl) -> float:
         # Apply a penalty for each frame this occurs
         return -1.0 * env.dt
     
-    if move_left_pressed or move_right_pressed:
-        return 3.0 * env.dt
+    # if move_left_pressed or move_right_pressed:
+    #     return 1.0 * env.dt
 
     return 0.0
 ### Stage 2

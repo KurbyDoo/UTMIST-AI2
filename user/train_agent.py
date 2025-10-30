@@ -322,8 +322,8 @@ def train_stage(my_agent, save_name, stage_number):
             total_iterations = 405_000
         case 2:
             reward_manager = TowardsOpponentCurriculum()
-            save_freq = 40_500
-            total_iterations = 405_000
+            save_freq = 250_000
+            total_iterations = 15_000_000
 
     save_path = 'checkpoints'
     run_name = f'{save_name}_stage_{stage_number}'
@@ -392,4 +392,5 @@ if __name__ == '__main__':
     # Create agent
     # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
-    train_basic_curriculum()
+    # train_basic_curriculum()
+    train_stage(RecurrentPPOAgent(file_path="checkpoints/La_bot_v2_stage_2/rl_model_2700317_steps"), "La_bot_v2", 2)
