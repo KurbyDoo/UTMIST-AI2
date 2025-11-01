@@ -233,7 +233,7 @@ def in_air_reward(env: WarehouseBrawl) -> float:
     player: Player = env.objects["player"]
 
     if isinstance(player_state, InAirState):
-        return 1.0 if player.body.position.y > 0 else 0
+        return -1.0 if player.body.position.y > 0 else 0
     return 1
 
 

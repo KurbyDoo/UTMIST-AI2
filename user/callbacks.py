@@ -38,6 +38,8 @@ class SaveAndRenderCallback(BaseCallback):
         self.games_completed = 0
         self.start_time = time.time()
         self.first_step_done = False  # Track if we've rendered initial demo
+        # Will be set in _on_training_start() to track stage progress
+        self.starting_timesteps = 0
 
         # Setup CSV logging
         self.log_file = os.path.join(self.experiment_path, "training_log.csv")
@@ -49,10 +51,20 @@ class SaveAndRenderCallback(BaseCallback):
         if self.verbose > 0:
             print(f"Logging training metrics to {self.log_file}")
 
+    def _on_training_start(self) -> None:
+        """Called at the beginning of training to set the starting timestep."""
+        self.starting_timesteps = self.model.num_timesteps
+        if self.verbose > 0:
+            print(
+                f"[CALLBACK] Starting from {self.starting_timesteps} timesteps")
+
     def _on_step(self) -> bool:
         """
         This method will be called by the model after each call to `env.step()`.
         """
+        # Calculate steps within this training stage
+        stage_timesteps = self.num_timesteps - self.starting_timesteps
+
         # Render initial demo video on first step (when resuming training)
         if not self.first_step_done and self.n_calls == 1:
             self.first_step_done = True
@@ -71,16 +83,22 @@ class SaveAndRenderCallback(BaseCallback):
         # Write to CSV log every 10000 steps
         if self.n_calls % 10000 == 0:
             time_elapsed = time.time() - self.start_time
-            fps = self.num_timesteps / time_elapsed if time_elapsed > 0 else 0
+            fps = stage_timesteps / time_elapsed if time_elapsed > 0 else 0
             self.csv_writer.writerow(
-                [self.num_timesteps, self.games_completed, f'{time_elapsed:.2f}', f'{fps:.2f}'])
+                [stage_timesteps, self.games_completed, f'{time_elapsed:.2f}', f'{fps:.2f}'])
             self.csv_file.flush()
             if self.verbose > 0:
                 print(
-                    f"[LOG] Timesteps: {self.num_timesteps}, Games: {self.games_completed}, FPS: {fps:.2f}")
+                    f"[LOG] Stage Timesteps: {stage_timesteps}, Total: {self.num_timesteps}, Games: {self.games_completed}, FPS: {fps:.2f}")
 
-        # Save model based on num_timesteps (not n_calls) to work correctly with parallel envs
-        if self.num_timesteps > 0 and self.num_timesteps % self.save_freq == 0:
+        # Save model based on stage_timesteps to work correctly when resuming from previous stages
+        # Check if we've crossed a save threshold (for parallel envs that increment by batch size)
+        current_checkpoint = stage_timesteps // self.save_freq
+        # 16 = 8 envs * 2 (approximate batch)
+        previous_checkpoint = (stage_timesteps - 16) // self.save_freq
+
+        if current_checkpoint > previous_checkpoint and stage_timesteps > 0:
+            # We've crossed a save point
             path = os.path.join(
                 self.experiment_path, f"{self.name_prefix}_{self.num_timesteps}_steps.zip")
             self.model.save(path)
@@ -90,9 +108,14 @@ class SaveAndRenderCallback(BaseCallback):
             if self.max_saved > 0 and len(self.saved_models) > self.max_saved:
                 os.remove(self.saved_models.pop(0))
 
-        # Render demo videos based on num_timesteps
-        if self.render_freq > 0 and self.num_timesteps > 0 and self.num_timesteps % self.render_freq == 0:
-            self._render_demo_video()
+        # Render demo videos - same logic
+        if self.render_freq > 0 and stage_timesteps > 0:
+            current_render_checkpoint = stage_timesteps // self.render_freq
+            previous_render_checkpoint = (
+                stage_timesteps - 16) // self.render_freq
+
+            if current_render_checkpoint > previous_render_checkpoint:
+                self._render_demo_video()
 
         return True
 

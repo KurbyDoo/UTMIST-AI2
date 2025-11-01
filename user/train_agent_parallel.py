@@ -31,6 +31,7 @@ from stable_baselines3.common.callbacks import CallbackList
 # TODO: Fix name conflicts
 # from environment.agent import *
 from environment.agent_parallel import Agent
+from environment.agent import JumpingAgent
 from typing import Optional, Type, List, Tuple
 
 # -------------------------------------------------------------------------
@@ -325,10 +326,17 @@ def train_stage(my_agent, save_name, stage_number, total_iterations):
             reward_manager = TowardsOpponentCurriculum()
             save_freq = 405000
             stage_iterations = 8025000
+            opponent_specification = {
+                'constant_agent': (1, partial(ConstantAgent))
+            }
         case 3:
             reward_manager = KillOpponentCurriculum()
             save_freq = 202500
             stage_iterations = save_freq * 5
+            opponent_specification = {
+                'constant_agent': (0.5, partial(ConstantAgent)),
+                'jumping_agent': (0.5, partial(JumpingAgent)),
+            }
 
     save_path = 'checkpoints_parallel'
     run_name = f'{save_name}_stage_{stage_number}'
@@ -336,9 +344,6 @@ def train_stage(my_agent, save_name, stage_number, total_iterations):
     os.makedirs(log_dir, exist_ok=True)
 
     # Set opponent settings here:
-    opponent_specification = {
-        'constant_agent': (1, partial(ConstantAgent)),
-    }
     opponent_cfg = OpponentsCfg(opponents=opponent_specification)
 
     # Setup callback
@@ -384,7 +389,7 @@ def train_basic_curriculum(start_stage: int = 0, file_path: str | None = None):
 
     # Stage 1
     total_iterations = 0
-    for stage_number in range(start_stage, 3):
+    for stage_number in range(start_stage, 4):
         train_stage(my_agent, save_name, stage_number, total_iterations)
 
 
@@ -402,6 +407,6 @@ if __name__ == '__main__':
 
     # Resume training from latest checkpoint
     train_basic_curriculum(
-        start_stage=2,
+        start_stage=3,
         file_path="checkpoints_parallel/everything_16_agent_stage_2/rl_model_7290000_steps.zip"
     )

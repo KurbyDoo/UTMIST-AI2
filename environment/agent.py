@@ -616,7 +616,7 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
 
         observations, rewards, terminated, truncated, info = self.raw_env.step(
             full_action)
-        
+
         self.opponent_obs = observations[1]
 
         if self.save_handler is not None:
@@ -875,6 +875,34 @@ class BasedAgent(Agent):
         # Attack if near
         if (pos[0] - opp_pos[0])**2 + (pos[1] - opp_pos[1])**2 < 4.0:
             action = self.act_helper.press_keys(['j'], action)
+        return action
+
+
+class JumpingAgent(Agent):
+    '''
+    JumpingAgent:
+    - An agent that continuously jumps in place by pressing space every few frames.
+    This agent does not move horizontally and only jumps vertically.
+    '''
+
+    def __init__(
+            self,
+            jump_interval: int = 15,  # Number of frames between jumps
+            *args,
+            **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.time = 0
+        self.jump_interval = jump_interval
+
+    def predict(self, obs):
+        self.time += 1
+        action = self.act_helper.zeros()
+
+        # Jump every jump_interval frames
+        if self.time % self.jump_interval == 0:
+            action = self.act_helper.press_keys(['space'])
+
         return action
 
 
