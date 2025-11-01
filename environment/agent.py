@@ -650,8 +650,8 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
             print(f"[AGENT] Complete game {self.games_done}")
 
         # Render video after x games and before training
-        if self.games_done % self.render_every == 0 or self.games_done == 1:
-            self.render_demo_video()
+        # if self.games_done % self.render_every == 0 or self.games_done == 1:
+        #     self.render_demo_video()
 
         return observations[0], info
 

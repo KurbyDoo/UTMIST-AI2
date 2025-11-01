@@ -13,7 +13,7 @@ my_agent = UserInputAgent()
 # my_agent = SubmittedAgent(
 #     file_path="checkpoints/curriculum_two_stage_v3_stage_0/rl_model_405000_steps.zip")
 opponent = RecurrentPPOAgent(
-    file_path='checkpoints/La_bot_v2_stage_2/rl_model_2237865_steps.zip'
+    file_path='checkpoints/La_bot_v7_stage_2/rl_model_2431501_steps.zip'
 )
 
 match_time = 90

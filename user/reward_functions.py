@@ -195,6 +195,34 @@ def penalize_far_attack(env: WarehouseBrawl, max_attack_distance: float = 2.0) -
 
     return 0.0
 
+def reward_close_attack(env: WarehouseBrawl, max_attack_distance: float = 0.5) -> float:
+    """
+    Penalizes the player for attacking when far from the opponent.
+    
+    Args:
+        env: The game environment
+        max_attack_distance: Maximum distance where attacking is acceptable (in world units)
+    
+    Returns:
+        float: Penalty if attacking while far, 0 otherwise
+    """
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+
+    if isinstance(player.state, KOState) or isinstance(opponent.state, KOState):
+        return 0.0
+
+    is_attacking = isinstance(player.state, AttackState)
+    if not is_attacking: return 0.0
+    distance = abs(player.body.position.x - opponent.body.position.x)
+
+    if distance > max_attack_distance:
+        reward = 1.0 - (distance - max_attack_distance)
+        return max(reward, -0.5)
+    elif distance <= max_attack_distance:
+        return 1.0
+    return 0.0
+
 def on_win_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == 'player': return 1.0
     else: return -1.0
@@ -231,7 +259,7 @@ def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
 def in_air_reward(env: WarehouseBrawl) -> float:
     player_state = env.objects["player"].state
     if isinstance(player_state, InAirState):
-        return -0.5
+        return 1.1
     return 1
 
 
@@ -243,7 +271,7 @@ def avoid_falling_reward(env: WarehouseBrawl) -> float:
 
     p_x = player.body.position.x
     if abs(p_x) >= 7.0:
-        return -1.0 * env.dt
+        return (-1.0 + in_air_reward(env)) * env.dt
     
     elif abs(player.body.position.x) < 2.0:
         platform1: Stage = env.objects['platform1']
@@ -251,7 +279,7 @@ def avoid_falling_reward(env: WarehouseBrawl) -> float:
         #     reward += 1.0 if p_vx * platform.velocity_x > 0 else -2.0
         
         if platform1.body.position.y < player.body.position.y:
-            return -1.0 * env.dt
+            return (-1.0 + in_air_reward(env)) * env.dt
     return 0
     
 
@@ -309,7 +337,7 @@ def avoid_under_moving_platform(env: WarehouseBrawl) -> float:
     platform: Stage = env.objects["platform1"]
 
     # if player is under moving platform
-    if abs(player.body.position.x - platform.body.position.x) < 1 and player.body.position.y > platform.body.position.y:
+    if abs(player.body.position.x) < 2.0 and player.body.position.y - 0.25 > platform.body.position.y:
         return -1.0 * env.dt
     return 0.0
         

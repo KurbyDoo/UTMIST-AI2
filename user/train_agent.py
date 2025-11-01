@@ -335,6 +335,9 @@ def train_stage(my_agent, save_name, stage_number):
     if my_agent.file_path is None:
         saveMode = SaveHandlerMode.FORCE
 
+    selfplay_handler = SelfPlayLatest(partial(RecurrentPPOAgent))
+
+
     save_handler = SaveHandler(
         agent=my_agent,  # Agent to save
         save_freq=save_freq,  # Save frequency
@@ -346,7 +349,8 @@ def train_stage(my_agent, save_name, stage_number):
 
     # Set opponent settings here:
     opponent_specification = {
-        'constant_agent': (1, partial(ConstantAgent)),
+        'self_play': (0.7, selfplay_handler), 
+        'constant_agent': (0.3, partial(ConstantAgent)),
     }
     opponent_cfg = OpponentsCfg(opponents=opponent_specification)
 
@@ -393,4 +397,4 @@ if __name__ == '__main__':
     # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
     # train_basic_curriculum()
-    train_stage(RecurrentPPOAgent(file_path="checkpoints/La_bot_v2_stage_2/rl_model_2700317_steps"), "La_bot_v2", 2)
+    train_stage(RecurrentPPOAgent(file_path="checkpoints/La_bot_v7_stage_2/rl_model_1190700_steps.zip"), "La_bot_v7", 2)
