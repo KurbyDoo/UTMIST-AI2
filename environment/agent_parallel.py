@@ -4,7 +4,8 @@ from pygame.locals import QUIT
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 from stable_baselines3.common.base_class import BaseAlgorithm
 from tqdm import tqdm
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.env_util import make_vec_env
 from environment.environment import ActHelper, AirTurnaroundState, Animation, AnimationSprite2D, AttackState, BackDashState, Camera, CameraResolution, Capsule, CapsuleCollider, Cast, CastFrameChangeHolder, CasterPositionChange, CasterVelocityDampXY, CasterVelocitySet, CasterVelocitySetXY, CompactMoveState, DashState, DealtPositionTarget, DodgeState, Facing, GameObject, Ground, GroundState, HurtboxPositionChange, InAirState, KOState, KeyIconPanel, KeyStatus, MalachiteEnv, MatchStats, MoveManager, MoveType, ObsHelper, Particle, Player, PlayerInputHandler, PlayerObjectState, PlayerStats, Power, RenderMode, Result, Signal, SprintingState, Stage, StandingState, StunState, Target, TauntState, TurnaroundState, UIHandler, WalkingState, WarehouseBrawl, hex_to_rgb
 
 import warnings
@@ -101,22 +102,14 @@ class Agent(ABC):
         self.initialized = False
 
     def get_env_info(self, env):
-        from stable_baselines3.common.vec_env import VecEnv
-        if isinstance(env, VecEnv):
-            self.observation_space = env.observation_space
-            self.action_space = env.action_space
-            self.obs_helper = env.get_attr('obs_helper')[0]
-            self.act_helper = env.get_attr('act_helper')[0]
+        if isinstance(env, Monitor):
+            self_env = env.env
         else:
-            if isinstance(env, Monitor):
-                self_env = env.env
-            else:
-                self_env = env
-            self.observation_space = self_env.observation_space
-            self.obs_helper = self_env.obs_helper
-            self.action_space = self_env.action_space
-            self.act_helper = self_env.act_helper
-
+            self_env = env
+        self.observation_space = self_env.observation_space
+        self.obs_helper = self_env.obs_helper
+        self.action_space = self_env.action_space
+        self.act_helper = self_env.act_helper
         self.env = env
         self._initialize()
         self.initialized = True
@@ -299,156 +292,15 @@ class RewardManager():
 # In[ ]:
 
 
-class SaveHandlerMode(Enum):
-    FORCE = 0
-    RESUME = 1
-
-
-class SaveHandler():
-    """Handles saving.
-
-    Args:
-        agent (Agent): Agent to save.
-        save_freq (int): Number of steps between saving.
-        max_saved (int): Maximum number of saved models.
-        save_dir (str): Directory to save models.
-        name_prefix (str): Prefix for saved models.
-    """
-
-    # System for saving to internet
-
-    def __init__(
-        self,
-        agent: Agent,
-        save_freq: int = 10_000,
-        max_saved: int = 20,
-        run_name: str = 'experiment_1',
-        save_path: str = 'checkpoints',
-        name_prefix: str = "rl_model",
-        mode: SaveHandlerMode = SaveHandlerMode.FORCE
-    ):
-        self.agent = agent
-        self.save_freq = save_freq
-        self.run_name = run_name
-        self.max_saved = max_saved
-        self.save_path = save_path
-        self.name_prefix = name_prefix
-        self.mode = mode
-
-        self._start_time = time.time()
-
-        self.steps_until_save = save_freq
-        # Get model paths from exp_path, if it exists
-        exp_path = self._experiment_path()
-
-        self.history: List[str] = []
-        if self.mode == SaveHandlerMode.FORCE:
-            # Clear old dir
-            if os.path.exists(exp_path) and len(os.listdir(exp_path)) != 0:
-                while True:
-                    answer = input(
-                        f"Would you like to clear the folder {exp_path} (SaveHandlerMode.FORCE): yes (y) or no (n): ").strip().lower()
-                    if answer in ('y', 'n'):
-                        break
-                    else:
-                        print("Invalid input, please enter 'y' or 'n'.")
-
-                if answer == 'n':
-                    raise ValueError(
-                        'Please switch to SaveHandlerMode.FORCE or use a new run_name.')
-                print(f'Clearing {exp_path}...')
-                if os.path.exists(exp_path):
-                    shutil.rmtree(exp_path)
-            else:
-                print(f'{exp_path} empty or does not exist. Creating...')
-
-            if not os.path.exists(exp_path):
-                os.makedirs(exp_path)
-        elif self.mode == SaveHandlerMode.RESUME:
-            if os.path.exists(exp_path):
-                # Get all model paths
-                self.history = [os.path.join(exp_path, f) for f in os.listdir(
-                    exp_path) if os.path.isfile(os.path.join(exp_path, f))]
-                # Filter any non .csv
-                self.history = [f for f in self.history if f.endswith('.zip')]
-                if len(self.history) != 0:
-                    self.history.sort(key=lambda x: int(
-                        os.path.basename(x).split('_')[-2].split('.')[0]))
-                    if max_saved != -1:
-                        self.history = self.history[-max_saved:]
-                    print(f'Best model is {self.history[-1]}')
-                else:
-                    print(f'No models found in {exp_path}.')
-                    raise FileNotFoundError
-            else:
-                print(f'No file found at {exp_path}')
-
-        self.game_logger = setup_logger(exp_path, 'game_iterations')
-        self.training_logger = setup_logger(exp_path, 'training_metrics')
-
-    def update_info(self) -> None:
-        self.num_timesteps = self.agent.get_num_timesteps()
-
-    def _experiment_path(self) -> str:
-        """
-        Helper to get experiment path for each type of checkpoint.
-
-        :param extension: Checkpoint file extension (zip for model, pkl for others)
-        :return: Path to the checkpoint
-        """
-        return os.path.join(self.save_path, self.run_name)
-
-    def _checkpoint_path(self, extension: str = '') -> str:
-        """
-        Helper to get checkpoint path for each type of checkpoint.
-
-        :param extension: Checkpoint file extension (zip for model, pkl for others)
-        :return: Path to the checkpoint
-        """
-        return os.path.join(self._experiment_path(), f"{self.name_prefix}_{self.num_timesteps}_steps.{extension}")
-
-    def save_agent(self) -> None:
-        # print(f"Saving agent to {self._checkpoint_path()}")
-        model_path = self._checkpoint_path('zip')
-        self.agent.save(model_path)
-        self.history.append(model_path)
-        self.training_logger.info(f"Saving Agent to {self._checkpoint_path()}")
-        self.training_logger.info(
-            f"Iterations: {self.num_timesteps} steps ({(time.time()-self._start_time):.3f}s)")
-        if self.max_saved != -1 and len(self.history) > self.max_saved:
-            os.remove(self.history.pop(0))
-
-    def process(self) -> bool:
-        self.num_timesteps += 1
-        if not (self.num_timesteps % 1_000):
-            # print(f"{self.num_timesteps // 1_000}K steps processed")
-            self.game_logger.info(
-                f"{self.num_timesteps // 1_000}K steps processed")
-        if self.steps_until_save <= 0:
-            # Save agent
-            self.steps_until_save = self.save_freq - 1
-            self.save_agent()
-            return True
-        self.steps_until_save -= 1
-
-        return False
-
-    def get_random_model_path(self) -> str:
-        if len(self.history) == 0:
-            return None
-        return random.choice(self.history)
-
-    def get_latest_model_path(self) -> str:
-        if len(self.history) == 0:
-            return None
-        return self.history[-1]
-
-
 class SelfPlayHandler(ABC):
     """Handles self-play."""
 
-    def __init__(self, agent_partial: partial):
+    def __init__(self, agent_partial: partial, save_path: str, run_name: str):
         self.agent_partial = agent_partial
+        self.save_path = save_path
+        self.run_name = run_name
+        self.experiment_path = os.path.join(self.save_path, self.run_name)
+        self.env = None  # This will be set by OpponentsCfg
 
     def get_model_from_path(self, path) -> Agent:
         if path:
@@ -461,8 +313,25 @@ class SelfPlayHandler(ABC):
         else:
             print("Warning: No self-play model saved. Defaulting to constant agent.")
             opponent = ConstantAgent()
-        opponent.get_env_info(self.env)
+
+        if self.env:
+            opponent.get_env_info(self.env)
+        else:
+            print(
+                "Warning: SelfPlayHandler does not have an environment reference. Cannot initialize opponent.")
+
         return opponent
+
+    def get_all_models(self) -> List[str]:
+        if not os.path.exists(self.experiment_path):
+            return []
+        history = [os.path.join(self.experiment_path, f) for f in os.listdir(
+            self.experiment_path) if os.path.isfile(os.path.join(self.experiment_path, f))]
+        history = [f for f in history if f.endswith('.zip')]
+        if len(history) > 0:
+            history.sort(key=lambda x: int(
+                os.path.basename(x).split('_')[-2].split('.')[0]))
+        return history
 
     @abstractmethod
     def get_opponent(self) -> Agent:
@@ -470,22 +339,22 @@ class SelfPlayHandler(ABC):
 
 
 class SelfPlayLatest(SelfPlayHandler):
-    def __init__(self, agent_partial: partial):
-        super().__init__(agent_partial)
+    def __init__(self, agent_partial: partial, save_path: str, run_name: str):
+        super().__init__(agent_partial, save_path, run_name)
 
     def get_opponent(self) -> Agent:
-        assert self.save_handler is not None, "Save handler must be specified for self-play"
-        chosen_path = self.save_handler.get_latest_model_path()
+        all_models = self.get_all_models()
+        chosen_path = all_models[-1] if all_models else None
         return self.get_model_from_path(chosen_path)
 
 
 class SelfPlayRandom(SelfPlayHandler):
-    def __init__(self, agent_partial: partial):
-        super().__init__(agent_partial)
+    def __init__(self, agent_partial: partial, save_path: str, run_name: str):
+        super().__init__(agent_partial, save_path, run_name)
 
     def get_opponent(self) -> Agent:
-        assert self.save_handler is not None, "Save handler must be specified for self-play"
-        chosen_path = self.save_handler.get_random_model_path()
+        all_models = self.get_all_models()
+        chosen_path = random.choice(all_models) if all_models else None
         return self.get_model_from_path(chosen_path)
 
 
@@ -529,9 +398,11 @@ class OpponentsCfg():
         )[0]
 
         # If self-play is selected, return the trained model
-        print(f'[AGENT] Selected {agent_name}')
+        log_prefix = f"[Agent {self.env.rank}]" if self.env.rank is not None else "[AGENT]"
+        print(f'{log_prefix} Selected {agent_name}')
         if agent_name == "self_play":
             selfplay_handler: SelfPlayHandler = self.opponents[agent_name][1]
+            selfplay_handler.env = self.env  # Ensure the handler has the env reference
             return selfplay_handler.get_opponent()
         else:
             # Otherwise, return an instance of the selected agent class
@@ -554,25 +425,23 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
     def __init__(self,
                  reward_manager: Optional[RewardManager] = None,
                  opponent_cfg: OpponentsCfg = OpponentsCfg(),
-                 save_handler: Optional[SaveHandler] = None,
-                 render_every: int | None = None,
-                 resolution: CameraResolution = CameraResolution.LOW):
+                 resolution: CameraResolution = CameraResolution.LOW,
+                 rank: Optional[int] = None):
         """
         Initializes the environment.
 
         Args:
             reward_manager (Optional[RewardManager]): Reward manager.
             opponent_cfg (OpponentCfg): Configuration for opponents.
-            save_handler (SaveHandler): Configuration for self-play.
-            render_every (int | None): Number of steps between a demo render (None if no rendering).
+            resolution (CameraResolution): Rendering resolution.
+            rank (Optional[int]): The process rank for logging in parallel environments.
         """
         super().__init__()
 
         self.reward_manager = reward_manager
-        self.save_handler = save_handler
         self.opponent_cfg = opponent_cfg
-        self.render_every = render_every
         self.resolution = resolution
+        self.rank = rank
 
         self.games_done = 0
 
@@ -580,32 +449,14 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
         self.opponent_cfg.env = self
         self.opponent_cfg.validate_probabilities()
 
-        # Check if using self-play
-        for key, value in self.opponent_cfg.opponents.items():
-            if isinstance(value[1], SelfPlayHandler):
-                assert self.save_handler is not None, "Save handler must be specified for self-play"
-
-                # Give SelfPlayHandler references
-                selfplay_handler: SelfPlayHandler = value[1]
-                selfplay_handler.save_handler = self.save_handler
-                selfplay_handler.env = self
-
         self.raw_env = WarehouseBrawl(resolution=resolution, train_mode=True)
         self.action_space = self.raw_env.action_space
         self.act_helper = self.raw_env.act_helper
         self.observation_space = self.raw_env.observation_space
         self.obs_helper = self.raw_env.obs_helper
 
-    def on_training_start(self):
-        # Update SaveHandler
-        if self.save_handler is not None:
-            self.save_handler.update_info()
-
-    def on_training_end(self):
-        if self.save_handler is not None:
-            self.save_handler.agent.update_num_timesteps(
-                self.save_handler.num_timesteps)
-            self.save_handler.save_agent()
+        self.opponent_agent = None
+        self.opponent_obs = None
 
     def step(self, action):
 
@@ -619,32 +470,19 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
 
         self.opponent_obs = observations[1]
 
-        if self.save_handler is not None:
-            self.save_handler.process()
-
         if self.reward_manager is None:
             reward = rewards[0]
         else:
             reward = self.reward_manager.process(self.raw_env, 1 / 30.0)
-            total_reward = self.raw_env.logger[0].get(
-                "total_reward", -float('inf'))
-            if self.save_handler.num_timesteps % 100 == 0:
-                self.save_handler.training_logger.info(
-                    f"{total_reward} {reward} {self.save_handler.num_timesteps}")
 
         return observations[0], reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
         # Reset MalachiteEnv
-
-        total_reward = self.raw_env.logger[0].get(
-            "total_reward", -float('inf'))
-        self.save_handler.training_logger.info(
-            f"Completed game with reward {total_reward}")
-
         observations, info = self.raw_env.reset()
 
-        self.reward_manager.reset()
+        if self.reward_manager:
+            self.reward_manager.reset()
 
         # Select agent
         new_agent: Agent = self.opponent_cfg.on_env_reset()
@@ -654,46 +492,14 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
 
         self.games_done += 1
 
-        if self.save_handler is not None:
-            if self.games_done == 1:
-                self.save_handler.game_logger.info(
-                    f"------- Starting at {self.save_handler.num_timesteps} -------")
-
-            self.save_handler.game_logger.info(
-                f"[AGENT] Complete game {self.games_done}")
-        else:
-            print(f"[AGENT] Complete game {self.games_done}")
-
-        # Render video after x games and before training
-        if (self.render_every != 0) and (self.games_done % self.render_every == 0 or self.games_done == 1):
-            self.render_demo_video()
-
         return observations[0], info
 
     def render(self):
         img = self.raw_env.render()
         return img
 
-    def render_demo_video(self):
-        """Renders a demo video of the current agent vs opponent."""
-        print(f"[RENDER] Creating demo video at {self.games_done} games...")
-
-        video_path = f"{self.save_handler._experiment_path()}/demo_game_t{self.save_handler.num_timesteps}.mp4" if self.save_handler else f"demo_game_{self.games_done}.mp4"
-
-        # Run a match and record it
-        run_match(
-            agent_1=self.save_handler.agent,
-            agent_2=self.opponent_agent,
-            max_timesteps=30 * 90,  # 90 second match
-            video_path=video_path,
-            resolution=self.resolution,
-            reward_manager=self.reward_manager
-        )
-
-        print(f"[RENDER] Demo saved to {video_path}")
-
     def close(self):
-        pass
+        self.raw_env.close()
 
 
 # ## Run Match
@@ -826,7 +632,7 @@ class ConstantAgent(Agent):
 
 class RandomAgent(Agent):
 
-    def __init__(
+    def __init(
             self,
             *args,
             **kwargs
@@ -875,34 +681,6 @@ class BasedAgent(Agent):
         # Attack if near
         if (pos[0] - opp_pos[0])**2 + (pos[1] - opp_pos[1])**2 < 4.0:
             action = self.act_helper.press_keys(['j'], action)
-        return action
-
-
-class JumpingAgent(Agent):
-    '''
-    JumpingAgent:
-    - An agent that continuously jumps in place by pressing space every few frames.
-    This agent does not move horizontally and only jumps vertically.
-    '''
-
-    def __init__(
-            self,
-            jump_interval: int = 15,  # Number of frames between jumps
-            *args,
-            **kwargs
-    ):
-        super().__init__(*args, **kwargs)
-        self.time = 0
-        self.jump_interval = jump_interval
-
-    def predict(self, obs):
-        self.time += 1
-        action = self.act_helper.zeros()
-
-        # Jump every jump_interval frames
-        if self.time % self.jump_interval == 0:
-            action = self.act_helper.press_keys(['space'])
-
         return action
 
 
@@ -1044,348 +822,75 @@ class SB3Agent(Agent):
     def save(self, file_path: str) -> None:
         self.model.save(file_path, include=['num_timesteps'])
 
-    def learn(self, env, total_timesteps, log_interval: int = 1, verbose=0):
+    def learn(self, env, total_timesteps, callback=None, log_interval: int = 1, verbose=0):
         self.model.set_env(env)
         self.model.verbose = verbose
-
-        # Store reference to save_handler's logger if available
-        base_env = env.unwrapped if hasattr(env, 'unwrapped') else env
-        training_logger = base_env.save_handler.training_logger if base_env.save_handler else None
-
-        # Custom callback to capture training metrics
-        from stable_baselines3.common.callbacks import BaseCallback
-
-        class LoggingCallback(BaseCallback):
-            def __init__(self, logger):
-                super().__init__()
-                self.training_logger = logger
-
-            def _on_step(self) -> bool:
-                return True
-
-            def _on_rollout_end(self) -> None:
-                if self.training_logger and self.num_timesteps % (log_interval * self.model.n_steps) == 0:
-                    # Log the metrics that would appear in the table
-                    metrics = {
-                        'timesteps': self.num_timesteps,
-                        'ep_len_mean': self.model.ep_info_buffer[-1]['l'] if len(self.model.ep_info_buffer) > 0 else 0,
-                        'ep_rew_mean': self.model.ep_info_buffer[-1]['r'] if len(self.model.ep_info_buffer) > 0 else 0,
-                    }
-                    self.training_logger.info(f"Metrics: {metrics}")
-
-        callback = LoggingCallback(
-            training_logger) if training_logger else None
-
         self.model.learn(
             total_timesteps=total_timesteps,
+            callback=callback,
             log_interval=log_interval,
-            callback=callback
         )
 
 
-class RecurrentPPOAgent(Agent):
-
-    def __init__(
-            self,
-            file_path: Optional[str] = None
-    ):
-        super().__init__(file_path)
-        self.lstm_states = None
-        self.episode_starts = np.ones((1,), dtype=bool)
-
-    def _initialize(self) -> None:
-        if self.file_path is None:
-            policy_kwargs = {
-                'activation_fn': nn.ReLU,
-                'lstm_hidden_size': 512,
-                'net_arch': [dict(pi=[64, 64], vf=[64, 64])],
-                'shared_lstm': True,
-                'enable_critic_lstm': False,
-                'share_features_extractor': True,
-            }
-
-            # TODO: Find a good tuning for this
-            self.model = RecurrentPPO("MlpLstmPolicy",
-                                      self.env,
-                                      verbose=0,
-                                      n_steps=30*90*20,
-                                      batch_size=256,
-                                      ent_coef=0.05,
-                                      learning_rate=5e-4,
-                                      policy_kwargs=policy_kwargs)
-            del self.env
-        else:
-            self.model = RecurrentPPO.load(self.file_path)
-
-    def reset(self) -> None:
-        self.episode_starts = True
-
-    def predict(self, obs):
-        action, self.lstm_states = self.model.predict(
-            obs, state=self.lstm_states, episode_start=self.episode_starts, deterministic=True)
-        if self.episode_starts:
-            self.episode_starts = False
-        return action
-
-    def save(self, file_path: str) -> None:
-        self.model.save(file_path)
-
-    def learn(self, env, total_timesteps, log_interval: int = 2, verbose=0):
-        self.model.set_env(env)
-        self.model.verbose = verbose
-
-        # Store reference to save_handler's logger if available
-        base_env = env.unwrapped if hasattr(env, 'unwrapped') else env
-        training_logger = base_env.save_handler.training_logger if base_env.save_handler else None
-
-        # Custom callback to capture training metrics
-        from stable_baselines3.common.callbacks import BaseCallback
-
-        class LoggingCallback(BaseCallback):
-            def __init__(self, logger):
-                super().__init__()
-                self.training_logger = logger
-
-            def _on_step(self) -> bool:
-                return True
-
-            def _on_rollout_end(self) -> None:
-                if not (self.training_logger and
-                        self.num_timesteps % (log_interval * self.model.n_steps) == 0):
-                    return
-
-                metrics = {}
-                # Get from logger name_to_value dict
-                if hasattr(self.logger, 'name_to_value'):
-                    metrics.update(self.logger.name_to_value)
-
-                # Format and log
-                log_str = f"\n{'='*45}\n"
-                log_str += f"Timestep: {self.num_timesteps}\n"
-                log_str += f"{'='*45}\n"
-
-                # Group by category
-                categories = {}
-                for key, value in sorted(metrics.items()):
-                    if '/' in key:
-                        category, metric = key.split('/', 1)
-                        if category not in categories:
-                            categories[category] = {}
-                        categories[category][metric] = value
-                    else:
-                        if 'misc' not in categories:
-                            categories['misc'] = {}
-                        categories['misc'][key] = value
-
-                # Format by category
-                for category, cat_metrics in sorted(categories.items()):
-                    log_str += f"\n{category}/\n"
-                    for metric, value in sorted(cat_metrics.items()):
-                        if isinstance(value, float):
-                            log_str += f"  {metric:25s} {value:.4g}\n"
-                        else:
-                            log_str += f"  {metric:25s} {value}\n"
-
-                log_str += f"{'='*45}\n"
-
-                self.training_logger.info(log_str)
-
-        callback = LoggingCallback(
-            training_logger) if training_logger else None
-
-        self.model.learn(total_timesteps=total_timesteps,
-                         log_interval=log_interval,
-                         callback=callback)
-
-
-# ## Training Function
-# A helper function for training.
-
-# In[ ]:
-
-
 class TrainLogging(Enum):
-    NONE = 0
-    TO_FILE = 1
-    PLOT = 2
-
-
-def plot_results(log_folder, title="Learning Curve"):
-    """
-    plot the results
-
-    :param log_folder: (str) the save location of the results to plot
-    :param title: (str) the title of the task to plot
-    """
-    x, y = ts2xy(load_results(log_folder), "timesteps")
-
-    weights = np.repeat(1.0, 50) / 50
-    print(weights, y)
-    y = np.convolve(y, weights, "valid")
-    # Truncate x
-    x = x[len(x) - len(y):]
-
-    fig = plt.figure(title)
-    plt.plot(x, y)
-    plt.xlabel("Number of Timesteps")
-    plt.ylabel("Rewards")
-    plt.title(title + " Smoothed")
-
-    # save to file
-    plt.savefig(log_folder + title + ".png")
+    NONE = auto()
+    PLOT = auto()
+    VIDEO = auto()
 
 
 def train(agent: Agent,
           reward_manager: RewardManager,
-          save_handler: Optional[SaveHandler] = None,
           opponent_cfg: OpponentsCfg = OpponentsCfg(),
           resolution: CameraResolution = CameraResolution.LOW,
           train_timesteps: int = 400_000,
           train_logging: TrainLogging = TrainLogging.PLOT,
-          render_every: int | None = None
+          n_envs: int = 1,
+          log_dir: str = "/tmp/gym/",
+          callback: Optional[Callable] = None,
+          log_interval: int = 1
           ):
     # Create environment
-    env = SelfPlayWarehouseBrawl(reward_manager=reward_manager,
-                                 opponent_cfg=opponent_cfg,
-                                 save_handler=save_handler,
-                                 resolution=resolution,
-                                 render_every=render_every
-                                 )
-    reward_manager.subscribe_signals(env.raw_env)
-    if train_logging != TrainLogging.NONE:
-        # Create log dir
-        log_dir = f"{save_handler._experiment_path()}/" if save_handler is not None else "/tmp/gym/"
-        os.makedirs(log_dir, exist_ok=True)
 
-        # Logs will be saved in log_dir/monitor.csv
-        env = Monitor(env, log_dir)
+    def make_env(rank: int, seed: int = 0):
+        def _init():
+            env_kwargs = dict(
+                reward_manager=reward_manager,
+                opponent_cfg=opponent_cfg,
+                resolution=resolution,
+                rank=rank
+            )
+            env = SelfPlayWarehouseBrawl(**env_kwargs)
+            env.reset(seed=seed + rank)
+            # Only wrap with Monitor if we are in a parallel env, otherwise the outer Monitor will handle it
+            return Monitor(env, log_dir if n_envs > 1 else None)
+        return _init
 
-    base_env = env.unwrapped if hasattr(env, 'unwrapped') else env
+    if n_envs > 1:
+        # Create the vectorized environment
+        env = SubprocVecEnv([make_env(i) for i in range(n_envs)])
+    else:
+        # Create a single environment
+        env = SelfPlayWarehouseBrawl(
+            reward_manager=reward_manager, opponent_cfg=opponent_cfg, resolution=resolution, rank=0)
+        if train_logging != TrainLogging.NONE:
+            os.makedirs(log_dir, exist_ok=True)
+            env = Monitor(env, log_dir)
+
+    # Initialize agent if it hasn't been already
+    if not agent.initialized:
+        agent.get_env_info(env)
+
     try:
-        agent.get_env_info(base_env)
-        base_env.on_training_start()
-        agent.learn(env, total_timesteps=train_timesteps, verbose=1)
-        base_env.on_training_end()
+        # The agent's get_env_info is called by the callback or before training starts
+        agent.learn(env, total_timesteps=train_timesteps,
+                    callback=callback, verbose=1)
     except KeyboardInterrupt:
         pass
 
-    env.close()
-
-    if save_handler is not None:
-        save_handler.save_agent()
-
     if train_logging == TrainLogging.PLOT:
-        plot_results(log_dir)
+        # Plot results - works with both single and parallel environments
+        from environment.agent import plot_results
+        plot_results(log_dir, title="Learning Curve")
 
-
-# Run Human vs AI match function
-
-
-def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=30*90, resolution=CameraResolution.LOW):
-    pygame.init()
-
-    pygame.mixer.init()
-
-    # Load your soundtrack (must be .wav, .ogg, or supported format)
-    pygame.mixer.music.load("environment/assets/soundtrack.mp3")
-
-    # Play it on loop: -1 = loop forever
-    pygame.mixer.music.play(-1)
-
-    # Optional: set volume (0.0 to 1.0)
-    pygame.mixer.music.set_volume(0.2)
-
-    resolutions = {
-        CameraResolution.LOW: (480, 720),
-        CameraResolution.MEDIUM: (720, 1280),
-        CameraResolution.HIGH: (1080, 1920)
-    }
-
-    screen = pygame.display.set_mode(
-        resolutions[resolution][::-1])  # Set screen dimensions
-
-    pygame.display.set_caption("AI Squared - Player vs AI Demo")
-
-    clock = pygame.time.Clock()
-
-    # Initialize environment
-    env = WarehouseBrawl(resolution=resolution, train_mode=False)
-    observations, _ = env.reset()
-    obs_1 = observations[0]
-    obs_2 = observations[1]
-
-    if not agent_1.initialized:
-        agent_1.get_env_info(env)
-    if not agent_2.initialized:
-        agent_2.get_env_info(env)
-
-    # Run the match loop
-    running = True
-    timestep = 0
-   # platform1 = env.objects["platform1"] #mohamed
-    # stage2 = env.objects["stage2"]
-    background_image = pygame.image.load(
-        'environment/assets/map/bg.jpg').convert()
-    while running and timestep < max_timesteps:
-
-        # Pygame event to handle real-time user input
-
-        for event in pygame.event.get():
-            if event.type == QUIT:
-                running = False
-            if event.type == pygame.VIDEORESIZE:
-                screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
-
-        action_1 = agent_1.predict(obs_1)
-
-        # AI input
-        action_2 = agent_2.predict(obs_2)
-
-        # Sample action space
-        full_action = {0: action_1, 1: action_2}
-        observations, rewards, terminated, truncated, info = env.step(
-            full_action)
-        obs_1 = observations[0]
-        obs_2 = observations[1]
-
-        # Render the game
-
-        img = env.render()
-        screen.blit(pygame.surfarray.make_surface(img), (0, 0))
-
-        pygame.display.flip()
-
-        # Control frame rate (30 fps)
-        clock.tick(30)
-
-        # If the match is over (either terminated or truncated), stop the loop
-        if terminated or truncated:
-            running = False
-
-        timestep += 1
-
-    # Clean up pygame after match
-    pygame.quit()
-
-    # Return match stats
-    player_1_stats = env.get_stats(0)
-    player_2_stats = env.get_stats(1)
-
-    if player_1_stats.lives_left > player_2_stats.lives_left:
-        result = Result.WIN
-    elif player_1_stats.lives_left < player_2_stats.lives_left:
-        result = Result.LOSS
-    else:
-        result = Result.DRAW
-
-    match_stats = MatchStats(
-        match_time=timestep / 30.0,
-        player1=player_1_stats,
-        player2=player_2_stats,
-        player1_result=result
-    )
-
-    # Close environment
     env.close()
-
-    return match_stats
+    del env

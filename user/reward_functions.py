@@ -230,8 +230,10 @@ def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
 
 def in_air_reward(env: WarehouseBrawl) -> float:
     player_state = env.objects["player"].state
+    player: Player = env.objects["player"]
+
     if isinstance(player_state, InAirState):
-        return -1.0
+        return -1.0 if player.body.position.y > 0 else 0
     return 1
 
 
@@ -338,3 +340,8 @@ def avoid_holding_opposite_keys(env: WarehouseBrawl) -> float:
 def stand_still_penalty(env: WarehouseBrawl) -> float:
     """Avoid standing still."""
     return in_state_reward(env, StandingState, True)
+
+
+def knockout_bonus(env: WarehouseBrawl, agent: str) -> float:
+    if agent == 'player': return -1.0
+    else: return 2.0

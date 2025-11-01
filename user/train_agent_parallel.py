@@ -14,21 +14,24 @@ b) Continue training from a specific timestep given an input `file_path`
 # -------------------------------------------------------------------
 
 from user.reward_agents import *
+from environment.agent_parallel import *
+from user.callbacks import SaveAndRenderCallback
 import torch
-import gymnasium as gym
 from torch.nn import functional as F
 from torch import nn as nn
-import numpy as np
+import gymnasium as gym
 import pygame
-import time
+
 from stable_baselines3 import A2C, PPO, SAC, DQN, DDPG, TD3, HER
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from stable_baselines3.common.callbacks import CallbackList
 
 # TODO: Fix name conflicts
 # from environment.agent import *
-from environment.agent import Agent
+from environment.agent_parallel import Agent
+from environment.agent import JumpingAgent
 from typing import Optional, Type, List, Tuple
 
 # -------------------------------------------------------------------------
@@ -196,7 +199,8 @@ class ClockworkAgent(Agent):
                 (1, ['l']),
                 (20, ['a']),
                 (3, ['a', 'j']),
-                (15, ['space']),
+                (30, []),
+                (7, ['d']),
             ]
         else:
             self.action_sheet = action_sheet
@@ -261,12 +265,10 @@ class MLPExtractor(BaseFeaturesExtractor):
 
     @classmethod
     def get_policy_kwargs(cls, features_dim: int = 64, hidden_dim: int = 64) -> dict:
-        return dict(
-            features_extractor_class=cls,
-            # NOTE: features_dim = 10 to match action space output
-            features_extractor_kwargs=dict(
-                features_dim=features_dim, hidden_dim=hidden_dim)
-        )
+        return {
+            "features_extractor_class": cls,
+            "features_extractor_kwargs": {"features_dim": features_dim, "hidden_dim": hidden_dim},
+        }
 
 
 class CustomAgent(Agent):
@@ -324,63 +326,71 @@ def train_stage(my_agent, save_name, stage_number, total_iterations):
             reward_manager = TowardsOpponentCurriculum()
             save_freq = 405000
             stage_iterations = 8025000
+            opponent_specification = {
+                'constant_agent': (1, partial(ConstantAgent))
+            }
+        case 3:
+            reward_manager = KillOpponentCurriculum()
+            save_freq = 202500
+            stage_iterations = save_freq * 5
+            opponent_specification = {
+                'constant_agent': (0.5, partial(ConstantAgent)),
+                'jumping_agent': (0.5, partial(JumpingAgent)),
+            }
 
-    save_path = 'checkpoints'
+    save_path = 'checkpoints_parallel'
     run_name = f'{save_name}_stage_{stage_number}'
-
-    # Set save settings here:
-
-    # update saveMode depending on if agent exists
-    saveMode = SaveHandlerMode.RESUME
-    if my_agent.file_path is None:
-        saveMode = SaveHandlerMode.FORCE
-
-    save_handler = SaveHandler(
-        agent=my_agent,  # Agent to save
-        save_freq=save_freq,  # Save frequency
-        max_saved=20,  # Maximum number of saved models
-        save_path=save_path,  # Save path
-        run_name=run_name,
-        mode=saveMode  # Save mode, FORCE or RESUME
-    )
+    log_dir = os.path.join(save_path, run_name)
+    os.makedirs(log_dir, exist_ok=True)
 
     # Set opponent settings here:
-    opponent_specification = {
-        'constant_agent': (1, partial(ConstantAgent)),
-    }
     opponent_cfg = OpponentsCfg(opponents=opponent_specification)
 
+    # Setup callback
+    callback = SaveAndRenderCallback(
+        save_freq=save_freq,
+        save_path=save_path,
+        run_name=run_name,
+        # Render every save (every 405k steps instead of every 2M)
+        render_freq=save_freq,
+        reward_manager=reward_manager,
+        resolution=CameraResolution.LOW,
+        agent_class=type(my_agent),
+        sb3_class=my_agent.sb3_class,
+        opponent_cfg=opponent_cfg,
+        verbose=1
+    )
+
     train(
-        my_agent,
-        reward_manager,
-        save_handler,
-        opponent_cfg,
-        CameraResolution.LOW,
+        agent=my_agent,
+        reward_manager=reward_manager,
+        opponent_cfg=opponent_cfg,
+        resolution=CameraResolution.LOW,
         train_timesteps=stage_iterations,
         train_logging=TrainLogging.PLOT,
-        render_every=500
+        n_envs=16,
+        log_dir=log_dir,
+        callback=callback,
+        log_interval=10  # Log every 10 updates
     )
     total_iterations += stage_iterations
 
-    return f'{save_path}/{run_name}/rl_model_{total_iterations}_steps', stage_iterations
+    return
 
 
 def train_basic_curriculum(start_stage: int = 0, file_path: str | None = None):
     if file_path is not None:
-        my_agent = RecurrentPPOAgent(
-            file_path=file_path
-        )
+        my_agent = RecurrentPPOAgent(file_path=file_path)
+        my_agent.get_env_info(SelfPlayWarehouseBrawl())
     else:
         my_agent = RecurrentPPOAgent()
 
-    save_name = "everything"
+    save_name = "everything_16_agent"
 
     # Stage 1
     total_iterations = 0
-    for stage_number in range(start_stage, 3):
-        last_save, iterations = train_stage(my_agent, save_name, stage_number, total_iterations=total_iterations)
-        total_iterations += iterations
-        my_agent = RecurrentPPOAgent(file_path=last_save)
+    for stage_number in range(start_stage, 4):
+        train_stage(my_agent, save_name, stage_number, total_iterations)
 
 
 # -------------------------------------------------------------------------
@@ -395,4 +405,8 @@ if __name__ == '__main__':
     # Create agent
     # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
-    train_basic_curriculum(2)
+    # Resume training from latest checkpoint
+    train_basic_curriculum(
+        start_stage=3,
+        file_path="checkpoints_parallel/everything_16_agent_stage_2/rl_model_7290000_steps.zip"
+    )
