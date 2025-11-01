@@ -14,7 +14,7 @@ class BaseReward(RewardManager):
         return {
             'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.1),
             'key_spam': RewTerm(func=holding_more_than_3_keys, weight=0.5),
-            'avoid_taunt': RewTerm(func=avoid_taunt, weight=10)
+            'avoid_taunt': RewTerm(func=avoid_taunt, weight=0.5)
         }
 
     def _get_signal_subscriptions(self):
@@ -28,10 +28,10 @@ class BaseReward(RewardManager):
 class BasicMovementCurriculum(BaseReward):
     def _get_reward_functions(self):
         return super()._get_reward_functions() | {
-            'far_attack': RewTerm(func=penalize_far_attack, weight=10),
+            'far_attack': RewTerm(func=penalize_far_attack, weight=0.1),
             'conflict_movement': RewTerm(func=avoid_holding_opposite_keys, weight=0.2),
         }
-    
+
     def _get_signal_subscriptions(self):
         return {}
 
@@ -42,25 +42,41 @@ class StopFallingCurriculum(BasicMovementCurriculum):
             'avoid_edge': RewTerm(func=edge_avoidance_reward, weight=0.1),
             'avoid_pit': RewTerm(func=pit_avoidance_reward, weight=0.1),
         }
-    
+
     def _get_signal_subscriptions(self):
         """Override this method in subclasses to customize signals"""
         return {
-            'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=20)),
-            'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=10)),
+            'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=10)),
+            'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=5)),
         }
 
 
 class TowardsOpponentCurriculum(StopFallingCurriculum):
     def _get_reward_functions(self):
         return super()._get_reward_functions() | {
-            'head_to_opponent': RewTerm(func=norm_op_dist, weight=0.5),
-            'stationary_penalty': RewTerm(func=stand_still_penalty, weight=0.2),
+            'head_to_opponent': RewTerm(func=norm_op_dist, weight=5),
+            'stationary_penalty': RewTerm(func=stand_still_penalty, weight=0.5),
         }
+
+class KillOpponentCurriculum(TowardsOpponentCurriculum):
+    def _get_reward_functions(self):
+        return super()._get_reward_functions() | {
+            'in_air': RewTerm(func=in_air_reward, weight=0.2),
+            'damage_reward': RewTerm(func=damage_interaction_reward, weight=0.5)
+        }
+
+    def _get_signal_subscriptions(self):
+        """Override this method in subclasses to customize signals"""
+        return {
+            'knockout_opp_bonus': ('knockout_signal', RewTerm(func=knockout_bonus, weight=5)),
+        }
+
 
 # StandStill Agent
 # - Successfully stops falling off the map
 # - Chooses to stop moving entirely
+
+
 class StandStillReward(BaseReward):
     def _get_reward_functions(self):
         return super()._get_reward_functions() | {
@@ -84,9 +100,52 @@ class AvoidFalling(TowardsOpponent):
             'avoid_falling': RewTerm(func=avoid_falling_reward, weight=0.05),
             'head_to_opponent': RewTerm(func=norm_op_dist, weight=0.001),
         }
-    
+
+
 class BasicHit(AvoidFalling):
     def _get_reward_functions(self):
         return super()._get_reward_functions() | {
             'hit_opponent': RewTerm(func=damage_interaction_reward, weight=0.1),
         }
+
+
+class RecurrentPPOAgent(Agent):
+    '''
+    RecurrentPPOAgent:
+    - Defines an AI Agent that uses the RecurrentPPO SB3 algorithm
+    '''
+
+    def __init__(
+            self,
+            file_path: Optional[str] = None
+    ):
+        self.sb3_class = RecurrentPPO
+        super().__init__(file_path)
+
+    def _initialize(self) -> None:
+        if self.file_path is None:
+            self.model = self.sb3_class(
+                "MlpLstmPolicy", self.env, verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
+            del self.env
+        else:
+            self.model = self.sb3_class.load(self.file_path)
+
+    def _gdown(self) -> str:
+        # Call gdown to your link
+        return
+
+    def predict(self, obs):
+        action, _ = self.model.predict(obs)
+        return action
+
+    def save(self, file_path: str) -> None:
+        self.model.save(file_path, include=['num_timesteps'])
+
+    def learn(self, env, total_timesteps, log_interval: int = 1, verbose=0, callback=None):
+        self.model.set_env(env)
+        self.model.verbose = verbose
+        self.model.learn(
+            total_timesteps=total_timesteps,
+            log_interval=log_interval,
+            callback=callback
+        )
