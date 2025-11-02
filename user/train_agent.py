@@ -305,6 +305,9 @@ class CustomAgent(Agent):
             log_interval=log_interval,
         )
 
+def gen_reward_manager():
+    return TowardsOpponentCurriculum
+
 # -------------------------------------------------------------------------
 # -------------------------- Curriculum Training --------------------------
 # -------------------------------------------------------------------------
