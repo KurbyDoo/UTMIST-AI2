@@ -306,7 +306,7 @@ class CustomAgent(Agent):
         )
 
 def gen_reward_manager():
-    return TowardsOpponentCurriculum
+    return TowardsOpponentCurriculum()
 
 # -------------------------------------------------------------------------
 # -------------------------- Curriculum Training --------------------------
